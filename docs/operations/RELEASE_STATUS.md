@@ -20,8 +20,8 @@ and cloud receivers replicate durable Hub events. The source contains the R003
 migration and Edge receiver implementation, but they are **not deployed**.
 
 No claim of production readiness, live multi-device operation, payment
-settlement, kitchen delivery, printer delivery, or cloud acknowledgement is
-valid until the gates below have recorded evidence.
+settlement, completed order collection, kitchen delivery, printer delivery, or
+cloud acknowledgement is valid until the gates below have recorded evidence.
 
 ## Environment boundary
 

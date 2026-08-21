@@ -86,14 +86,13 @@ class HubCommandVerifier(
 
     private fun isPermitted(role: String, type: String): Boolean {
         val permissions = when (role) {
-            "CASHIER" -> setOf("order.create", "payment.capture", "order.status.transition")
+            // Do not advertise future command families as usable authority.
+            // The router and atomic contract currently implement order work
+            // only; exact transition ownership is checked again by the router.
+            "CASHIER" -> setOf("order.create", "order.status.transition")
             "KITCHEN_STAFF" -> setOf("order.status.transition")
-            "MANAGER" -> setOf(
-                "order.status.transition", "payment.refund", "inventory.receive", "inventory.adjust",
-                "inventory.waste", "inventory.void", "shift.open", "shift.close", "cashup.submit"
-            )
-            "OWNER" -> setOf("cashup.approve", "inventory.adjust", "payment.refund", "device.revoke")
-            "ADMINISTRATOR" -> setOf("device.revoke")
+            "MANAGER" -> setOf("order.status.transition")
+            "OWNER", "ADMINISTRATOR" -> emptySet()
             else -> emptySet()
         }
         return type in permissions

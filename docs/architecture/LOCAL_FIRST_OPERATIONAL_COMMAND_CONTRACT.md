@@ -72,6 +72,11 @@ stock movement, audit record, or outbox item remains.
 | `shift.open`, `shift.close`, `cashup.submit`, `cashup.approve` | active-shift validation, float/counts, variance, approval authority, financial postings, audit and replication events |
 | `device.pair`, `device.revoke`, `staff.session.*` | server-authoritative enrollment/revocation/lockout facts plus local authorization-bundle refresh |
 
+For the currently implemented order lifecycle, the exact role, state, payment,
+and cloud-replica rules are defined in
+`LOCAL_FIRST_ORDER_TRANSITION_AUTHORITY_CONTRACT.md`. A generic command type
+permission never substitutes for that transition matrix.
+
 ## Event envelope
 
 Every locally committed event includes `eventId`, `commandId`, `aggregateType`,

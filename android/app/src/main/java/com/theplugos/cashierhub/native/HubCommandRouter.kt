@@ -46,7 +46,7 @@ class HubCommandRouter(private val database: HubDatabase) {
         // command context. Browser/task input may choose products and tender
         // intent, but it may not smuggle display names, customer data, notes,
         // tenancy, actor identities, or arbitrary fields into the ledger.
-        val projection = JSONObject()
+        val eventPayload = JSONObject()
             .put("id", orderId)
             .put("orderId", orderId)
             .put("status", "PLACED")
@@ -56,6 +56,13 @@ class HubCommandRouter(private val database: HubDatabase) {
             .put("totalAmount", calculatedTotal)
             .put("paymentMethod", paymentMethod)
             .put("paymentType", paymentMethod)
+        // Payment status is a local projection fact rather than part of the
+        // R003 order-placement event. The cloud derives the same PENDING
+        // state from the accepted tender intent. Keeping it out of the event
+        // preserves the strict, minimal replication payload while letting the
+        // local router fail closed on a later collection/cancellation request.
+        val orderProjection = JSONObject(eventPayload.toString())
+            .put("paymentStatus", "PENDING")
 
         return RoutedCommand(
             events = listOf(
@@ -63,10 +70,10 @@ class HubCommandRouter(private val database: HubDatabase) {
                     aggregateId = orderId,
                     aggregateType = "order",
                     action = "ORDER_PLACED",
-                    payload = projection
+                    payload = eventPayload
                 )
             ),
-            projections = listOf(ProjectionWrite("orders", orderId, projection)) + validatedItems.stockProjections
+            projections = listOf(ProjectionWrite("orders", orderId, orderProjection)) + validatedItems.stockProjections
         )
     }
 
@@ -89,9 +96,7 @@ class HubCommandRouter(private val database: HubDatabase) {
         if (nextStatus !in (permittedTransitions[currentStatus] ?: emptySet())) {
             throw HubCommandRejectedException("$currentStatus cannot transition to $nextStatus.")
         }
-        if (context.role == "KITCHEN_STAFF" && nextStatus !in setOf("PREPARING", "READY")) {
-            throw HubCommandRejectedException("Kitchen staff can only move an order to PREPARING or READY.")
-        }
+        enforceTransitionAuthority(context.role, currentStatus, nextStatus, current)
         // Keep transition events minimal and derived. The existing projection
         // is local state, but there is no need to re-replicate prior order
         // fields or accept a caller's actor/tenancy metadata.
@@ -250,6 +255,32 @@ class HubCommandRouter(private val database: HubDatabase) {
                     )
                 )
             }
+        }
+    }
+
+    /**
+     * State ownership is intentionally explicit rather than inferred from a
+     * broad `order.status.transition` permission. The same matrix is
+     * independently enforced by the R004 cloud-ingest trigger so an older or
+     * compromised Hub cannot turn a signed Cashier session into kitchen or
+     * financial authority.
+     */
+    private fun enforceTransitionAuthority(role: String, currentStatus: String, nextStatus: String, current: JSONObject) {
+        val paymentStatus = current.optString("paymentStatus", "PENDING").trim()
+        val permitted = when (role) {
+            "KITCHEN_STAFF" ->
+                (currentStatus == "PLACED" && nextStatus == "PREPARING") ||
+                    (currentStatus == "PREPARING" && nextStatus == "READY")
+            "CASHIER" ->
+                (currentStatus == "PLACED" && nextStatus == "CANCELLED" && paymentStatus == "PENDING") ||
+                    (currentStatus == "READY" && nextStatus == "COLLECTED" && paymentStatus == "CAPTURED")
+            "MANAGER" ->
+                ((currentStatus in setOf("PLACED", "PREPARING")) && nextStatus == "CANCELLED" && paymentStatus == "PENDING") ||
+                    (currentStatus == "READY" && nextStatus == "COLLECTED" && paymentStatus == "CAPTURED")
+            else -> false
+        }
+        if (!permitted) {
+            throw HubCommandRejectedException("The verified $role session cannot change $currentStatus to $nextStatus under the current payment state.")
         }
     }
 

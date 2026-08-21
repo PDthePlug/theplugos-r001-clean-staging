@@ -282,7 +282,10 @@ function MainOSApp() {
     await signOut();
     if (typeof window !== 'undefined') {
       const url = new URL(window.location.href);
-      url.searchParams.delete('auth');
+      const retainedSearch = new URLSearchParams(
+        [...url.searchParams.entries()].filter(([key]) => key !== 'auth'),
+      ).toString();
+      url.search = retainedSearch ? `?${retainedSearch}` : '';
       window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
     }
     setRecoveryMode(false);
