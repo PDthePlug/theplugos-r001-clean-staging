@@ -240,6 +240,14 @@ class ThePlugOSLocalHubPlugin : Plugin() {
                 })
             }
         })
+        put("readyForCollectionOrders", JSArray().apply {
+            context.readyForCollectionOrders.forEach { order ->
+                put(JSObject().apply {
+                    put("id", order.orderId)
+                    put("status", order.status)
+                })
+            }
+        })
         put("pendingKitchenOrders", JSArray().apply {
             context.pendingKitchenOrders.forEach { order ->
                 put(JSObject().apply {

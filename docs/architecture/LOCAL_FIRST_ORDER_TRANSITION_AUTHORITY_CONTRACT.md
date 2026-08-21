@@ -114,6 +114,12 @@ cancellation is limited to an unprepared or preparing, pending order. Once a
 future payment capture occurs, cancellation must fail and use the separately
 authorized refund/reversal workflow instead.
 
+The native Cashier collection queue is defined in
+`LOCAL_FIRST_CASH_COLLECTION_WORKFLOW_CONTRACT.md`. It exposes only locally
+captured `READY` orders and requests the existing `COLLECTED` transition; it
+does not prove physical handover, printing, notification, remote delivery, or
+cloud acknowledgement.
+
 ## Failure handling
 
 | Failure | Required behavior |

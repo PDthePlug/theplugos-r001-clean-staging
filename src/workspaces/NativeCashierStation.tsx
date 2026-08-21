@@ -17,6 +17,7 @@ type BasketLine = {
 
 type PendingRequest = NativeHubCommandRequest & { orderId: string };
 type PendingPaymentRequest = NativeHubCommandRequest & { orderId: string; paymentId: string };
+type PendingCollectionRequest = NativeHubCommandRequest & { orderId: string };
 
 const money = new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR' });
 
@@ -61,6 +62,20 @@ function recoveredPaymentRequests(context: NativeHubOperatorContext): Record<str
   }, {});
 }
 
+function recoveredCollectionRequests(context: NativeHubOperatorContext): Record<string, PendingCollectionRequest> {
+  return (context.recoverableNativeCommands || []).reduce<Record<string, PendingCollectionRequest>>((requests, command) => {
+    const orderId = command.payload.orderId;
+    if (command.type !== 'order.status.transition' || typeof orderId !== 'string' || command.payload.status !== 'COLLECTED') {
+      return requests;
+    }
+    if (requests[orderId] && requests[orderId].commandId !== command.commandId) {
+      throw new Error(`The native Hub has more than one unresolved collection request for order ${orderId.slice(0, 8)}. Reconcile the measured native state before requesting collection.`);
+    }
+    requests[orderId] = { ...command, orderId };
+    return requests;
+  }, {});
+}
+
 /**
  * First genuine cashier slice. Every menu value comes from the signed Hub
  * snapshot and every order moves through the native command request bridge;
@@ -75,8 +90,10 @@ export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onEx
   const [submitting, setSubmitting] = useState(false);
   const [pendingRequest, setPendingRequest] = useState<PendingRequest | null>(null);
   const [pendingPaymentRequests, setPendingPaymentRequests] = useState<Record<string, PendingPaymentRequest>>({});
+  const [pendingCollectionRequests, setPendingCollectionRequests] = useState<Record<string, PendingCollectionRequest>>({});
   const [cashTenderedByOrder, setCashTenderedByOrder] = useState<Record<string, string>>({});
   const [capturingOrderId, setCapturingOrderId] = useState<string | null>(null);
+  const [collectingOrderId, setCollectingOrderId] = useState<string | null>(null);
   const [endingNativeSession, setEndingNativeSession] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -88,6 +105,7 @@ export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onEx
     setContext(operator);
     setPendingRequest(recoveredOrderRequest(operator));
     setPendingPaymentRequests(recoveredPaymentRequests(operator));
+    setPendingCollectionRequests(recoveredCollectionRequests(operator));
     setHealth(localHubRuntime.getNetworkHealth());
   }, []);
 
@@ -295,12 +313,64 @@ export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onEx
     }
   };
 
+  const collectReadyOrder = async (order: NonNullable<NativeHubOperatorContext>['readyForCollectionOrders'][number]) => {
+    setCollectingOrderId(order.id);
+    setMessage(null);
+    let request = pendingCollectionRequests[order.id];
+    try {
+      if (!request) {
+        request = {
+          commandId: createRequestUuid(),
+          orderId: order.id,
+          type: 'order.status.transition',
+          payload: { orderId: order.id, status: 'COLLECTED' },
+        };
+        setPendingCollectionRequests((current) => ({ ...current, [order.id]: request }));
+      }
+      const receipt = await localHubRuntime.submitNativeCommandRequest(request);
+      setPendingCollectionRequests((current) => {
+        const next = { ...current };
+        delete next[order.id];
+        return next;
+      });
+      await refreshNativeState();
+      setMessage(
+        receipt.outcome === 'DUPLICATE'
+          ? `The exact collection request for order ${order.id.slice(0, 8)} was already committed locally; no second collection transition was written.`
+          : `Order ${order.id.slice(0, 8)} was marked collected locally. ${receipt.outboxIds.length} event(s) remain queued until cloud acknowledgement if the link is unavailable.`,
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The native Hub could not commit this collection transition. The same request can be retried safely.');
+    } finally {
+      setCollectingOrderId(null);
+    }
+  };
+
+  const abandonPendingCollection = async (order: NonNullable<NativeHubOperatorContext>['readyForCollectionOrders'][number]) => {
+    const request = pendingCollectionRequests[order.id];
+    if (!request) return;
+    setCollectingOrderId(order.id);
+    setMessage(null);
+    try {
+      const discarded = await localHubRuntime.discardNativeCommandRequest(request.commandId);
+      await refreshNativeState();
+      setMessage(discarded
+        ? `The native Hub confirmed that the collection request for order ${order.id.slice(0, 8)} had no receipt and abandoned only its retry reservation. No collection event, order state, audit fact, or outbox record was removed.`
+        : 'That collection request no longer has an uncommitted native reservation. The measured Hub state was refreshed.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The native Hub could not safely abandon this collection request.');
+    } finally {
+      setCollectingOrderId(null);
+    }
+  };
+
   const cloudState = health?.cloudStatus || 'UNKNOWN';
   const peerTransportActive = health?.activeTransport === 'LAN_WIFI';
   const cloudIcon = cloudState === 'CONNECTED' ? <Cloud className="h-4 w-4" aria-hidden="true" /> : <CloudOff className="h-4 w-4" aria-hidden="true" />;
   const activeCashShift = context?.activeCashShift || null;
   const pendingCashOrders = context?.pendingCashOrders || [];
-  const busy = submitting || capturingOrderId !== null;
+  const readyForCollectionOrders = context?.readyForCollectionOrders || [];
+  const busy = submitting || capturingOrderId !== null || collectingOrderId !== null;
 
   if (loading) {
     return <main className="min-h-screen bg-slate-950 p-6 text-slate-100"><p className="mx-auto max-w-lg rounded-2xl border border-slate-800 bg-slate-900 p-5 text-sm">Opening the measured native Hub station…</p></main>;
@@ -359,7 +429,7 @@ export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onEx
 
         {pendingCashOrders.length > 0 && (
           <section className="space-y-4 rounded-3xl border border-emerald-500/30 bg-slate-900 p-5">
-            <div><h2 className="text-lg font-bold">Cash collection queue</h2><p className="mt-1 text-xs leading-relaxed text-slate-400">These are your locally committed cash orders that still need one native capture. Enter what the customer handed over; the Hub derives the captured amount and change.</p></div>
+            <div><h2 className="text-lg font-bold">Cash capture queue</h2><p className="mt-1 text-xs leading-relaxed text-slate-400">These are your locally committed cash orders that still need one native capture. Enter what the customer handed over; the Hub derives the captured amount and change.</p></div>
             <div className="grid gap-3 lg:grid-cols-2">
               {pendingCashOrders.map((order) => {
                 const pendingCapture = pendingPaymentRequests[order.id];
@@ -370,6 +440,25 @@ export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onEx
                     <label className="mt-4 block text-xs font-semibold text-slate-300">Cash tendered<input inputMode="decimal" value={cashTenderedByOrder[order.id] ?? order.totalAmount.toFixed(2)} disabled={busy || Boolean(pendingCapture)} onChange={(event) => { setCashTenderedByOrder((current) => ({ ...current, [order.id]: event.target.value })); }} className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-slate-100 disabled:opacity-50" /></label>
                     <button type="button" disabled={busy || !activeCashShift} onClick={() => void captureCashPayment(order)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-2.5 text-xs font-black text-slate-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"><ReceiptText className="h-3.5 w-3.5" aria-hidden="true" />{isCapturing ? 'Capturing locally…' : pendingCapture ? 'Retry the same cash capture' : 'Capture cash locally'}</button>
                     {pendingCapture && <button type="button" disabled={busy} onClick={() => void abandonPendingCashCapture(order)} className="mt-2 w-full text-xs font-semibold text-amber-200 hover:text-amber-100">Abandon only if native confirms it never committed</button>}
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        )}
+
+        {readyForCollectionOrders.length > 0 && (
+          <section className="space-y-4 rounded-3xl border border-sky-500/30 bg-slate-900 p-5">
+            <div><h2 className="text-lg font-bold">Ready for customer collection</h2><p className="mt-1 text-xs leading-relaxed text-slate-400">These branch-scoped orders are locally READY and have a captured cash fact. Marking one collected records the final local order transition; it is not proof of printing, notification, cloud acknowledgement, or physical handover.</p></div>
+            <div className="grid gap-3 lg:grid-cols-2">
+              {readyForCollectionOrders.map((order) => {
+                const pendingCollection = pendingCollectionRequests[order.id];
+                const isCollecting = collectingOrderId === order.id;
+                return (
+                  <article key={order.id} className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
+                    <div className="flex items-start justify-between gap-3"><div><span className="block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">Ready · cash captured</span><strong className="mt-1 block text-sm text-slate-100">Order {order.id.slice(0, 8)}</strong></div><span className="rounded-full border border-sky-500/30 bg-sky-500/10 px-2.5 py-1 text-xs font-bold text-sky-100">READY</span></div>
+                    <button type="button" disabled={busy} onClick={() => void collectReadyOrder(order)} className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-sky-300 px-4 py-2.5 text-xs font-black text-slate-950 hover:bg-sky-200 disabled:cursor-not-allowed disabled:opacity-50"><ReceiptText className="h-3.5 w-3.5" aria-hidden="true" />{isCollecting ? 'Marking collected locally…' : pendingCollection ? 'Retry the same collection request' : 'Mark collected locally'}</button>
+                    {pendingCollection && <button type="button" disabled={busy} onClick={() => void abandonPendingCollection(order)} className="mt-2 w-full text-xs font-semibold text-amber-200 hover:text-amber-100">Abandon only if native confirms it never committed</button>}
                   </article>
                 );
               })}

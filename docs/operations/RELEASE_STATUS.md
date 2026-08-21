@@ -25,6 +25,11 @@ native Kitchen workflow can request the already-authorized
 demonstrate remote Kitchen, printer, notification, or physical delivery. No
 migration or Edge receiver is **deployed**.
 
+The source-only Cashier collection workflow can request the existing
+`READY -> COLLECTED` transition only after the local cash-capture fact is
+present. It does not demonstrate physical handover, receipt printing, remote
+delivery, or cloud acknowledgement.
+
 The Android host now has a source-only native station-entry and local
 session-end path that does not borrow an Owner browser session. This does not
 constitute a cloud logout, a hardware acceptance result, or a production

@@ -130,6 +130,13 @@ export interface NativeHubPendingCashOrder {
   paymentMethod: 'CASH';
 }
 
+/** A non-financial Cashier handover task. Native code has already verified
+ * `READY` and `CAPTURED`; React may only request the final transition. */
+export interface NativeHubReadyForCollectionOrder {
+  id: string;
+  status: 'READY';
+}
+
 /** Bounded, non-financial local ticket data for an authenticated native
  * Kitchen session. It is a rendered projection, never command authority. */
 export interface NativeHubKitchenOrderLine {
@@ -157,6 +164,7 @@ export interface NativeHubOperatorContext {
   catalogProducts: NativeHubCatalogProduct[];
   activeCashShift: NativeHubCashShift | null;
   pendingCashOrders: NativeHubPendingCashOrder[];
+  readyForCollectionOrders: NativeHubReadyForCollectionOrder[];
   pendingKitchenOrders: NativeHubKitchenOrder[];
   recoverableNativeCommands: NativeHubRecoverableCommand[];
 }

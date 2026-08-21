@@ -194,6 +194,7 @@ data class NativeOperatorContext(
     val catalogProducts: List<NativeCatalogProduct>,
     val activeCashShift: NativeCashShift?,
     val pendingCashOrders: List<NativePendingCashOrder>,
+    val readyForCollectionOrders: List<NativeReadyForCollectionOrder>,
     val pendingKitchenOrders: List<NativeKitchenOrder>,
     val recoverableNativeCommands: List<NativeRecoverableCommand>
 )
@@ -227,6 +228,13 @@ data class NativePendingCashOrder(
     val status: String,
     val totalAmount: Double,
     val paymentMethod: String
+)
+
+/** A Cashier collection task is deliberately non-financial: the Hub already
+ * proved the captured payment state before this bounded projection is shown. */
+data class NativeReadyForCollectionOrder(
+    val orderId: String,
+    val status: String
 )
 
 /** A Kitchen session sees only locally committed, branch-scoped preparation
