@@ -28,8 +28,8 @@ valid until the gates below have recorded evidence.
 | Environment | Current classification | Allowed action |
 |---|---|---|
 | Production `iwbbwcaylpulcpvbfkdx` | R001 foundation; read-only inspection only | Preserve data; do not apply R002/R003 or deploy receivers |
-| Existing staging `dpqtgfxovmiwzkiuzoya` | Contaminated rehearsal evidence | Read-only for comparison; do not reset, overwrite, or treat as a release target |
-| Replacement staging | Not yet created | Create only after explicit project/cost confirmation; rebuild from the verified R001 clone runbook |
+| Legacy staging `dpqtgfxovmiwzkiuzoya` | Paused contaminated rehearsal evidence | Preserve for comparison; do not resume, reset, overwrite, or treat as a release target without a separate review |
+| Clean staging `nuufscrmkfoukndfmwcc` | Empty Free-plan replacement | Use only for the verified R001 clone runbook; do not apply R002/R003 or deploy receivers until the clone gate passes |
 
 ## Required gates before a production release
 

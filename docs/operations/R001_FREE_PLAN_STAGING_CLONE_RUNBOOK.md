@@ -4,7 +4,7 @@
 
 This runbook prepares a manual logical clone from the accepted R001 Supabase
 project into the manually created Free-plan project
-`theplugos-r001-staging` (`dpqtgfxovmiwzkiuzoya`). It is not authorization to
+`theplugos-r001-clean-staging` (`nuufscrmkfoukndfmwcc`). It is not authorization to
 apply `002_secure_identity_devices.sql`.
 
 Hard rules:
@@ -15,7 +15,7 @@ Hard rules:
 - Every source SQL session sets `default_transaction_read_only=on`; inventory
   queries also use an explicit `BEGIN READ ONLY` transaction.
 - Only the project whose pooler username contains
-  `dpqtgfxovmiwzkiuzoya` may receive writes.
+  `nuufscrmkfoukndfmwcc` may receive writes.
 - Use the Session Pooler on port `5432`. Do not use the transaction pooler on
   port `6543`.
 - Do not place connection strings, passwords, API keys, SQL dumps, or raw
@@ -28,12 +28,12 @@ Hard rules:
 
 | Field | Required value |
 |---|---|
-| Project name | `theplugos-r001-staging` |
-| Project reference | `dpqtgfxovmiwzkiuzoya` |
+| Project name | `theplugos-r001-clean-staging` |
+| Project reference | `nuufscrmkfoukndfmwcc` |
 | Pooler mode | Session |
 | Pooler port | `5432` |
 | Database | `postgres` |
-| Pooler user | `postgres.dpqtgfxovmiwzkiuzoya` |
+| Pooler user | `postgres.nuufscrmkfoukndfmwcc` |
 
 The source project reference and both projects' Session Pooler hostnames are
 intentionally not recorded in this file.
@@ -50,7 +50,7 @@ not use a committed `.env` file.
 | `THEPLUGOS_R001_SOURCE_DB_PASSWORD` | Yes | Read-only dump connection. The session itself is forced read-only. |
 | `THEPLUGOS_R001_STAGING_POOLER_HOST` | No | Destination IPv4 Session Pooler hostname copied from **Connect**. |
 | `THEPLUGOS_R001_STAGING_DB_PASSWORD` | Yes | Staging restore and validation. |
-| `VITE_SUPABASE_URL` | No | Must be `https://dpqtgfxovmiwzkiuzoya.supabase.co`. |
+| `VITE_SUPABASE_URL` | No | Must be `https://nuufscrmkfoukndfmwcc.supabase.co`. |
 | `VITE_SUPABASE_ANON_KEY` | Public credential | Staging browser/Auth/PostgREST acceptance only. |
 
 The database passwords are preferable to complete connection URIs: this
@@ -72,7 +72,7 @@ source_pg() (
 staging_pg() (
   export PGHOST="$THEPLUGOS_R001_STAGING_POOLER_HOST"
   export PGPORT=5432
-  export PGUSER='postgres.dpqtgfxovmiwzkiuzoya'
+  export PGUSER='postgres.nuufscrmkfoukndfmwcc'
   export PGPASSWORD="$THEPLUGOS_R001_STAGING_DB_PASSWORD"
   export PGDATABASE=postgres
   export PGSSLMODE=require
@@ -179,7 +179,7 @@ export R001_CLONE_WORKDIR
 Validate target identity before any write:
 
 ```bash
-test "$THEPLUGOS_R001_SOURCE_PROJECT_REF" != 'dpqtgfxovmiwzkiuzoya'
+test "$THEPLUGOS_R001_SOURCE_PROJECT_REF" != 'nuufscrmkfoukndfmwcc'
 test "$THEPLUGOS_R001_SOURCE_POOLER_HOST" != "$THEPLUGOS_R001_STAGING_POOLER_HOST"
 case "$THEPLUGOS_R001_SOURCE_POOLER_HOST" in *.pooler.supabase.com) ;; *) exit 41 ;; esac
 case "$THEPLUGOS_R001_STAGING_POOLER_HOST" in *.pooler.supabase.com) ;; *) exit 42 ;; esac
@@ -197,7 +197,7 @@ staging_pg psql --no-psqlrc --set ON_ERROR_STOP=1 --tuples-only --no-align \
 
 The source result must report `postgres`, a source pooler role, and
 `transaction_read_only=on`. The destination user configured by the operator
-must be exactly `postgres.dpqtgfxovmiwzkiuzoya`. Source and destination server
+must be exactly `postgres.nuufscrmkfoukndfmwcc`. Source and destination server
 majors must be compatible, and the PostgreSQL client must not be older than
 the source.
 

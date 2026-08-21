@@ -9,13 +9,14 @@
 - Production project `iwbbwcaylpulcpvbfkdx` is read-only throughout this
   rehearsal. Do not run a migration, deploy an Edge Function, change Auth, or
   alter a row there.
-- Existing staging project `dpqtgfxovmiwzkiuzoya` contains incompatible
-  rehearsal artifacts and test data. Treat it as read-only comparison evidence:
-  do **not** reset, overwrite, or use it as a release target. Create a
-  replacement clean staging project, then rebuild it as an **exact R001 clone**
-  using an approved database client/credential path. Do not hand-copy rows or
-  use `supabase/quarantine/legacy-browser-prototype-schema.sql`; it contradicts
-  the canonical migrations.
+- Legacy staging project `dpqtgfxovmiwzkiuzoya` contains incompatible rehearsal
+  artifacts and test data and is paused. Treat it as preserved comparison
+  evidence: do **not** resume, reset, overwrite, or use it as a release target.
+  Clean staging `nuufscrmkfoukndfmwcc` is the only replacement target and is
+  currently empty. Rebuild it as an **exact R001 clone** using an approved
+  database client/credential path. Do not hand-copy rows or use
+  `supabase/quarantine/legacy-browser-prototype-schema.sql`; it contradicts the
+  canonical migrations.
 - The four unsupported live legacy PIN values must be handled under the
   separately approved owner-controlled reset/conversion plan. Never expose,
   guess, or copy them into a ticket, log, browser, or chat.
