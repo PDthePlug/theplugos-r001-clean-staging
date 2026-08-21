@@ -1,5 +1,5 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
-import { ArrowLeft, Cloud, CloudOff, Minus, Plus, ReceiptText, RefreshCw, ShieldCheck, ShoppingBasket, WifiOff } from 'lucide-react';
+import { ArrowLeft, Cloud, CloudOff, Minus, Plus, ReceiptText, RefreshCw, ShieldCheck, ShoppingBasket, WifiOff, XCircle } from 'lucide-react';
 import { localHubRuntime } from '@plugos/core';
 import type { NativeHubCommandRequest, NativeHubOperatorContext, NetworkHealth } from '@plugos/core';
 
@@ -18,6 +18,7 @@ type BasketLine = {
 type PendingRequest = NativeHubCommandRequest & { orderId: string };
 type PendingPaymentRequest = NativeHubCommandRequest & { orderId: string; paymentId: string };
 type PendingCollectionRequest = NativeHubCommandRequest & { orderId: string };
+type PendingCancellationRequest = NativeHubCommandRequest & { orderId: string };
 
 const money = new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR' });
 
@@ -76,6 +77,20 @@ function recoveredCollectionRequests(context: NativeHubOperatorContext): Record<
   }, {});
 }
 
+function recoveredCancellationRequests(context: NativeHubOperatorContext): Record<string, PendingCancellationRequest> {
+  return (context.recoverableNativeCommands || []).reduce<Record<string, PendingCancellationRequest>>((requests, command) => {
+    const orderId = command.payload.orderId;
+    if (command.type !== 'order.status.transition' || typeof orderId !== 'string' || command.payload.status !== 'CANCELLED') {
+      return requests;
+    }
+    if (requests[orderId] && requests[orderId].commandId !== command.commandId) {
+      throw new Error(`The native Hub has more than one unresolved cancellation request for order ${orderId.slice(0, 8)}. Reconcile the measured native state before requesting cancellation.`);
+    }
+    requests[orderId] = { ...command, orderId };
+    return requests;
+  }, {});
+}
+
 /**
  * First genuine cashier slice. Every menu value comes from the signed Hub
  * snapshot and every order moves through the native command request bridge;
@@ -91,9 +106,11 @@ export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onEx
   const [pendingRequest, setPendingRequest] = useState<PendingRequest | null>(null);
   const [pendingPaymentRequests, setPendingPaymentRequests] = useState<Record<string, PendingPaymentRequest>>({});
   const [pendingCollectionRequests, setPendingCollectionRequests] = useState<Record<string, PendingCollectionRequest>>({});
+  const [pendingCancellationRequests, setPendingCancellationRequests] = useState<Record<string, PendingCancellationRequest>>({});
   const [cashTenderedByOrder, setCashTenderedByOrder] = useState<Record<string, string>>({});
   const [capturingOrderId, setCapturingOrderId] = useState<string | null>(null);
   const [collectingOrderId, setCollectingOrderId] = useState<string | null>(null);
+  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [endingNativeSession, setEndingNativeSession] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -106,6 +123,7 @@ export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onEx
     setPendingRequest(recoveredOrderRequest(operator));
     setPendingPaymentRequests(recoveredPaymentRequests(operator));
     setPendingCollectionRequests(recoveredCollectionRequests(operator));
+    setPendingCancellationRequests(recoveredCancellationRequests(operator));
     setHealth(localHubRuntime.getNetworkHealth());
   }, []);
 
@@ -364,13 +382,67 @@ export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onEx
     }
   };
 
+  const cancelPendingOrder = async (order: NonNullable<NativeHubOperatorContext>['pendingCashOrders'][number]) => {
+    setCancellingOrderId(order.id);
+    setMessage(null);
+    let request = pendingCancellationRequests[order.id];
+    try {
+      if (!request) {
+        if (order.status !== 'PLACED') {
+          throw new Error('A Cashier can cancel only an unprepared pending order. Ask a Manager to resolve a preparing order.');
+        }
+        request = {
+          commandId: createRequestUuid(),
+          orderId: order.id,
+          type: 'order.status.transition',
+          payload: { orderId: order.id, status: 'CANCELLED' },
+        };
+        setPendingCancellationRequests((current) => ({ ...current, [order.id]: request }));
+      }
+      const receipt = await localHubRuntime.submitNativeCommandRequest(request);
+      setPendingCancellationRequests((current) => {
+        const next = { ...current };
+        delete next[order.id];
+        return next;
+      });
+      await refreshNativeState();
+      setMessage(
+        receipt.outcome === 'DUPLICATE'
+          ? `The exact cancellation request for order ${order.id.slice(0, 8)} was already committed locally; no second cancellation transition was written.`
+          : `Order ${order.id.slice(0, 8)} was cancelled locally. ${receipt.outboxIds.length} event(s) remain queued until cloud acknowledgement if the link is unavailable.`,
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The native Hub could not cancel this order. The same request can be retried safely.');
+    } finally {
+      setCancellingOrderId(null);
+    }
+  };
+
+  const abandonPendingCancellation = async (order: NonNullable<NativeHubOperatorContext>['pendingCashOrders'][number]) => {
+    const request = pendingCancellationRequests[order.id];
+    if (!request) return;
+    setCancellingOrderId(order.id);
+    setMessage(null);
+    try {
+      const discarded = await localHubRuntime.discardNativeCommandRequest(request.commandId);
+      await refreshNativeState();
+      setMessage(discarded
+        ? `The native Hub confirmed that the cancellation request for order ${order.id.slice(0, 8)} had no receipt and abandoned only its retry reservation. No cancellation event, order state, stock fact, audit fact, or outbox record was removed.`
+        : 'That cancellation request no longer has an uncommitted native reservation. The measured Hub state was refreshed.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The native Hub could not safely abandon this cancellation request.');
+    } finally {
+      setCancellingOrderId(null);
+    }
+  };
+
   const cloudState = health?.cloudStatus || 'UNKNOWN';
   const peerTransportActive = health?.activeTransport === 'LAN_WIFI';
   const cloudIcon = cloudState === 'CONNECTED' ? <Cloud className="h-4 w-4" aria-hidden="true" /> : <CloudOff className="h-4 w-4" aria-hidden="true" />;
   const activeCashShift = context?.activeCashShift || null;
   const pendingCashOrders = context?.pendingCashOrders || [];
   const readyForCollectionOrders = context?.readyForCollectionOrders || [];
-  const busy = submitting || capturingOrderId !== null || collectingOrderId !== null;
+  const busy = submitting || capturingOrderId !== null || collectingOrderId !== null || cancellingOrderId !== null;
 
   if (loading) {
     return <main className="min-h-screen bg-slate-950 p-6 text-slate-100"><p className="mx-auto max-w-lg rounded-2xl border border-slate-800 bg-slate-900 p-5 text-sm">Opening the measured native Hub station…</p></main>;
@@ -433,13 +505,16 @@ export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onEx
             <div className="grid gap-3 lg:grid-cols-2">
               {pendingCashOrders.map((order) => {
                 const pendingCapture = pendingPaymentRequests[order.id];
+                const pendingCancellation = pendingCancellationRequests[order.id];
                 const isCapturing = capturingOrderId === order.id;
+                const isCancelling = cancellingOrderId === order.id;
                 return (
                   <article key={order.id} className="rounded-2xl border border-slate-800 bg-slate-950 p-4">
                     <div className="flex items-start justify-between gap-3"><div><span className="block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{order.status} · cash pending</span><strong className="mt-1 block text-sm text-slate-100">Order {order.id.slice(0, 8)}</strong></div><strong className="text-base text-emerald-300">{money.format(order.totalAmount)}</strong></div>
-                    <label className="mt-4 block text-xs font-semibold text-slate-300">Cash tendered<input inputMode="decimal" value={cashTenderedByOrder[order.id] ?? order.totalAmount.toFixed(2)} disabled={busy || Boolean(pendingCapture)} onChange={(event) => { setCashTenderedByOrder((current) => ({ ...current, [order.id]: event.target.value })); }} className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-slate-100 disabled:opacity-50" /></label>
-                    <button type="button" disabled={busy || !activeCashShift} onClick={() => void captureCashPayment(order)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-2.5 text-xs font-black text-slate-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"><ReceiptText className="h-3.5 w-3.5" aria-hidden="true" />{isCapturing ? 'Capturing locally…' : pendingCapture ? 'Retry the same cash capture' : 'Capture cash locally'}</button>
+                    <label className="mt-4 block text-xs font-semibold text-slate-300">Cash tendered<input inputMode="decimal" value={cashTenderedByOrder[order.id] ?? order.totalAmount.toFixed(2)} disabled={busy || Boolean(pendingCapture) || Boolean(pendingCancellation)} onChange={(event) => { setCashTenderedByOrder((current) => ({ ...current, [order.id]: event.target.value })); }} className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-2.5 text-sm text-slate-100 disabled:opacity-50" /></label>
+                    <button type="button" disabled={busy || !activeCashShift || Boolean(pendingCancellation)} onClick={() => void captureCashPayment(order)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-2.5 text-xs font-black text-slate-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"><ReceiptText className="h-3.5 w-3.5" aria-hidden="true" />{isCapturing ? 'Capturing locally…' : pendingCapture ? 'Retry the same cash capture' : 'Capture cash locally'}</button>
                     {pendingCapture && <button type="button" disabled={busy} onClick={() => void abandonPendingCashCapture(order)} className="mt-2 w-full text-xs font-semibold text-amber-200 hover:text-amber-100">Abandon only if native confirms it never committed</button>}
+                    {(order.status === 'PLACED' || pendingCancellation) && <div className="mt-3 border-t border-slate-800 pt-3"><p className="text-[11px] leading-relaxed text-slate-500">Only an unprepared pending order may be cancelled by this Cashier. A preparing order must be resolved by a Manager.</p><button type="button" disabled={busy} onClick={() => void cancelPendingOrder(order)} className="mt-2 flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-xs font-black text-rose-100 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"><XCircle className="h-3.5 w-3.5" aria-hidden="true" />{isCancelling ? 'Cancelling locally…' : pendingCancellation ? 'Retry the same cancellation request' : 'Cancel unprepared order locally'}</button>{pendingCancellation && <button type="button" disabled={busy} onClick={() => void abandonPendingCancellation(order)} className="mt-2 w-full text-xs font-semibold text-amber-200 hover:text-amber-100">Abandon only if native confirms it never committed</button>}</div>}
                   </article>
                 );
               })}

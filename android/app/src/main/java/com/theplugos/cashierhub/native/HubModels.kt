@@ -195,6 +195,7 @@ data class NativeOperatorContext(
     val activeCashShift: NativeCashShift?,
     val pendingCashOrders: List<NativePendingCashOrder>,
     val readyForCollectionOrders: List<NativeReadyForCollectionOrder>,
+    val cancellableOrders: List<NativeCancellableOrder>,
     val pendingKitchenOrders: List<NativeKitchenOrder>,
     val recoverableNativeCommands: List<NativeRecoverableCommand>
 )
@@ -233,6 +234,14 @@ data class NativePendingCashOrder(
 /** A Cashier collection task is deliberately non-financial: the Hub already
  * proved the captured payment state before this bounded projection is shown. */
 data class NativeReadyForCollectionOrder(
+    val orderId: String,
+    val status: String
+)
+
+/** A Manager cancellation task intentionally exposes only the order identity
+ * and preparation state; money, tender, customer, and staff facts remain in
+ * the Hub ledger and are never rendered as cancellation authority. */
+data class NativeCancellableOrder(
     val orderId: String,
     val status: String
 )

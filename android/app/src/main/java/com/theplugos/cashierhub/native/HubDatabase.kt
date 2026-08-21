@@ -491,6 +491,11 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
         } else {
             emptyList()
         }
+        val cancellableOrders = if (session.role == "MANAGER") {
+            readCancellableOrdersForBranch(db, businessId, branchId)
+        } else {
+            emptyList()
+        }
         val pendingKitchenOrders = if (session.role == "KITCHEN_STAFF") {
             readPendingKitchenOrdersForBranch(db, businessId, branchId)
         } else {
@@ -506,6 +511,7 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
             activeCashShift = activeCashShift,
             pendingCashOrders = pendingCashOrders,
             readyForCollectionOrders = readyForCollectionOrders,
+            cancellableOrders = cancellableOrders,
             pendingKitchenOrders = pendingKitchenOrders,
             recoverableNativeCommands = recoverableNativeCommands
         )
@@ -678,6 +684,50 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
                         continue
                     }
                     add(NativeReadyForCollectionOrder(orderId, "READY"))
+                }
+            }
+        }
+
+    /** Manager cancellation tasks are branch-scoped by their immutable
+     * placement event. The projection only supplies a bounded task ID/status;
+     * the router independently rechecks role, payment state, and transition. */
+    private fun readCancellableOrdersForBranch(
+        db: SQLiteDatabase,
+        businessId: String,
+        branchId: String
+    ): List<NativeCancellableOrder> =
+        db.rawQuery(
+            """
+            SELECT projection_key, value_json
+            FROM projections p
+            WHERE p.projection_name = 'orders'
+              AND EXISTS (
+                  SELECT 1
+                  FROM events e
+                  WHERE e.aggregate_id = p.projection_key
+                    AND e.aggregate_type = 'order'
+                    AND e.action = 'ORDER_PLACED'
+                    AND e.business_id = ?
+                    AND e.branch_id = ?
+              )
+            ORDER BY p.updated_at ASC, p.projection_key ASC
+            LIMIT ?
+            """.trimIndent(),
+            arrayOf(businessId, branchId, MAX_NATIVE_CANCELLABLE_ORDERS.toString())
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    val orderId = cursor.getString(0).trim()
+                    requireNativeUuid(orderId, "A native cancellation order projection has an invalid order ID.")
+                    val value = JSONObject(cursor.getString(1))
+                    val payloadOrderId = value.optString("orderId", value.optString("id", "")).trim()
+                    if (payloadOrderId != orderId) {
+                        throw HubCommandRejectedException("A native cancellation order projection has inconsistent order identifiers.")
+                    }
+                    val status = value.optString("status", "").trim()
+                    val paymentStatus = value.optString("paymentStatus", "PENDING").trim()
+                    if (paymentStatus != "PENDING" || status !in CANCELLABLE_MANAGER_ORDER_STATUSES) continue
+                    add(NativeCancellableOrder(orderId, status))
                 }
             }
         }
@@ -1623,6 +1673,7 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
         const val MAX_SYNC_ERROR_CHARS = 160
         const val MAX_NATIVE_PENDING_CASH_ORDERS = 100
         const val MAX_NATIVE_READY_COLLECTION_ORDERS = 100
+        const val MAX_NATIVE_CANCELLABLE_ORDERS = 100
         const val MAX_NATIVE_PENDING_KITCHEN_ORDERS = 100
         const val MAX_NATIVE_KITCHEN_ORDER_LINES = 100
         const val MAX_NATIVE_KITCHEN_ITEM_NAME_LENGTH = 500
@@ -1632,6 +1683,7 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
         const val MONEY_EPSILON = 0.000_001
         const val KITCHEN_QUANTITY_EPSILON = 0.000_001
         val PENDING_CASH_ORDER_STATUSES = setOf("PLACED", "PREPARING", "READY")
+        val CANCELLABLE_MANAGER_ORDER_STATUSES = setOf("PLACED", "PREPARING")
         val PENDING_KITCHEN_ORDER_STATUSES = setOf("PLACED", "PREPARING")
         val RECOVERABLE_NATIVE_COMMAND_TYPES = setOf("shift.open", "shift.close", "order.create", "order.status.transition", "payment.capture")
     }

@@ -137,6 +137,13 @@ export interface NativeHubReadyForCollectionOrder {
   status: 'READY';
 }
 
+/** A bounded, non-financial Manager task for the already-authorized pending
+ * order cancellation transitions. */
+export interface NativeHubCancellableOrder {
+  id: string;
+  status: 'PLACED' | 'PREPARING';
+}
+
 /** Bounded, non-financial local ticket data for an authenticated native
  * Kitchen session. It is a rendered projection, never command authority. */
 export interface NativeHubKitchenOrderLine {
@@ -165,6 +172,7 @@ export interface NativeHubOperatorContext {
   activeCashShift: NativeHubCashShift | null;
   pendingCashOrders: NativeHubPendingCashOrder[];
   readyForCollectionOrders: NativeHubReadyForCollectionOrder[];
+  cancellableOrders: NativeHubCancellableOrder[];
   pendingKitchenOrders: NativeHubKitchenOrder[];
   recoverableNativeCommands: NativeHubRecoverableCommand[];
 }

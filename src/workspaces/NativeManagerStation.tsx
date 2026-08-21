@@ -1,7 +1,7 @@
 import React, { useCallback, useEffect, useState } from 'react';
-import { ArrowLeft, Cloud, CloudOff, Landmark, RefreshCw, ShieldCheck, WifiOff } from 'lucide-react';
+import { ArrowLeft, Cloud, CloudOff, Landmark, RefreshCw, ShieldCheck, WifiOff, XCircle } from 'lucide-react';
 import { localHubRuntime } from '@plugos/core';
-import type { NativeHubCommandRequest, NativeHubOperatorContext, NetworkHealth } from '@plugos/core';
+import type { NativeHubCancellableOrder, NativeHubCommandRequest, NativeHubOperatorContext, NetworkHealth } from '@plugos/core';
 
 interface NativeManagerStationProps {
   onExit: () => void;
@@ -10,6 +10,17 @@ interface NativeManagerStationProps {
 
 type PendingOpenShiftRequest = NativeHubCommandRequest;
 type PendingCloseShiftRequest = NativeHubCommandRequest;
+type PendingCancellationRequest = NativeHubCommandRequest & { orderId: string };
+type ManagerCancellationTask = NativeHubCancellableOrder | { id: string; status: 'RECOVERY' };
+
+interface ManagerCancellationQueueProps {
+  tasks: ManagerCancellationTask[];
+  pendingRequests: Record<string, PendingCancellationRequest>;
+  cancellingOrderId: string | null;
+  submitting: boolean;
+  onCancel: (order: ManagerCancellationTask) => void;
+  onAbandon: (order: ManagerCancellationTask) => void;
+}
 
 const money = new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR' });
 
@@ -42,9 +53,57 @@ function recoveredCloseShiftRequest(context: NativeHubOperatorContext): PendingC
   return (context.recoverableNativeCommands || []).find((command) => command.type === 'shift.close') || null;
 }
 
+function recoveredCancellationRequests(context: NativeHubOperatorContext): Record<string, PendingCancellationRequest> {
+  return (context.recoverableNativeCommands || []).reduce<Record<string, PendingCancellationRequest>>((requests, command) => {
+    const orderId = command.payload.orderId;
+    if (command.type !== 'order.status.transition' || typeof orderId !== 'string' || command.payload.status !== 'CANCELLED') {
+      return requests;
+    }
+    if (requests[orderId] && requests[orderId].commandId !== command.commandId) {
+      throw new Error(`The native Hub has more than one unresolved cancellation request for order ${orderId.slice(0, 8)}. Reconcile the measured native state before issuing another cancellation.`);
+    }
+    requests[orderId] = { ...command, orderId };
+    return requests;
+  }, {});
+}
+
 function requestShiftId(request: NativeHubCommandRequest): string {
   return typeof request.payload.shiftId === 'string' ? request.payload.shiftId : 'unknown';
 }
+
+const ManagerCancellationQueue: React.FC<ManagerCancellationQueueProps> = ({ tasks, pendingRequests, cancellingOrderId, submitting, onCancel, onAbandon }) => {
+  if (tasks.length === 0) return null;
+  const hasPendingRequest = Object.keys(pendingRequests).length > 0;
+  return (
+    <section className="space-y-3 rounded-2xl border border-rose-500/30 bg-slate-950 p-4">
+      <div>
+        <p className="text-xs font-semibold uppercase tracking-[0.15em] text-rose-200">Resolve pending orders</p>
+        <h3 className="mt-1 text-lg font-black">Cancellation authority before close</h3>
+        <p className="mt-1 text-sm leading-relaxed text-slate-400">These branch-scoped orders are still unpaid. A Manager may cancel only a locally `PLACED` or `PREPARING` order; native code verifies the state and restores the reserved stock atomically.</p>
+      </div>
+      <div className="grid gap-3 sm:grid-cols-2">
+        {tasks.map((order) => {
+          const pendingCancellation = pendingRequests[order.id];
+          const isCancelling = cancellingOrderId === order.id;
+          return (
+            <article key={order.id} className="rounded-xl border border-slate-800 bg-slate-900 p-3">
+              <div className="flex items-start justify-between gap-3">
+                <div>
+                  <span className="block text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">{order.status === 'RECOVERY' ? 'Retry reservation requires review' : `${order.status} · payment pending`}</span>
+                  <strong className="mt-1 block text-sm text-slate-100">Order {order.id.slice(0, 8)}</strong>
+                </div>
+                <span className="rounded-full border border-rose-500/30 bg-rose-500/10 px-2.5 py-1 text-xs font-bold text-rose-100">{order.status === 'RECOVERY' ? 'REVIEW' : order.status}</span>
+              </div>
+              <button type="button" disabled={submitting} onClick={() => onCancel(order)} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-rose-500/30 bg-rose-500/10 px-4 py-2.5 text-xs font-black text-rose-100 hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"><XCircle className="h-3.5 w-3.5" aria-hidden="true" />{isCancelling ? 'Cancelling locally…' : pendingCancellation ? 'Retry the same cancellation request' : 'Cancel order locally'}</button>
+              {pendingCancellation && <button type="button" disabled={submitting} onClick={() => onAbandon(order)} className="mt-2 w-full text-xs font-semibold text-amber-200 hover:text-amber-100">Abandon only if native confirms it never committed</button>}
+            </article>
+          );
+        })}
+      </div>
+      {hasPendingRequest && <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-100">A native cancellation request is unresolved. It must be retried exactly or safely abandoned before the Hub will accept a close request.</p>}
+    </section>
+  );
+};
 
 /** Native Manager surface for cash custody. The native Hub derives expected
  * cash and records a physical count; this UI never declares a bank deposit,
@@ -56,8 +115,10 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
   const [countedCash, setCountedCash] = useState('');
   const [pendingOpenRequest, setPendingOpenRequest] = useState<PendingOpenShiftRequest | null>(null);
   const [pendingCloseRequest, setPendingCloseRequest] = useState<PendingCloseShiftRequest | null>(null);
+  const [pendingCancellationRequests, setPendingCancellationRequests] = useState<Record<string, PendingCancellationRequest>>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [endingNativeSession, setEndingNativeSession] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -74,6 +135,7 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
     }
     setPendingOpenRequest(recoveredOpen);
     setPendingCloseRequest(recoveredClose);
+    setPendingCancellationRequests(recoveredCancellationRequests(operator));
     if (recoveredOpen && typeof recoveredOpen.payload.openingFloat === 'number') {
       setOpeningFloat(recoveredOpen.payload.openingFloat.toFixed(2));
     }
@@ -160,6 +222,10 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
       setMessage('There is no measured open cash shift to close. Refresh the native Hub state before retrying.');
       return;
     }
+    if (Object.keys(pendingCancellationRequests).length > 0) {
+      setMessage('Resolve the preserved native cancellation request before closing this cash shift. Retry it exactly, or use the native-confirmed abandonment path.');
+      return;
+    }
     setSubmitting(true);
     setMessage(null);
     let request = pendingCloseRequest;
@@ -205,6 +271,64 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
     }
   };
 
+  const cancelPendingOrder = async (order: ManagerCancellationTask) => {
+    setCancellingOrderId(order.id);
+    setSubmitting(true);
+    setMessage(null);
+    let request = pendingCancellationRequests[order.id];
+    try {
+      if (!request) {
+        if (order.status !== 'PLACED' && order.status !== 'PREPARING') {
+          throw new Error('This order is no longer eligible for a new Manager cancellation request. Refresh the measured Hub state.');
+        }
+        request = {
+          commandId: createRequestUuid(),
+          orderId: order.id,
+          type: 'order.status.transition',
+          payload: { orderId: order.id, status: 'CANCELLED' },
+        };
+        setPendingCancellationRequests((current) => ({ ...current, [order.id]: request }));
+      }
+      const receipt = await localHubRuntime.submitNativeCommandRequest(request);
+      setPendingCancellationRequests((current) => {
+        const next = { ...current };
+        delete next[order.id];
+        return next;
+      });
+      await refreshNativeState();
+      setMessage(
+        receipt.outcome === 'DUPLICATE'
+          ? `The exact cancellation request for order ${order.id.slice(0, 8)} was already committed locally; no second cancellation transition was written.`
+          : `Order ${order.id.slice(0, 8)} was cancelled locally. ${receipt.outboxIds.length} event(s) remain queued until cloud acknowledgement if the link is unavailable.`,
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The native Hub could not cancel this order. The same request can be retried safely.');
+    } finally {
+      setCancellingOrderId(null);
+      setSubmitting(false);
+    }
+  };
+
+  const abandonPendingCancellation = async (order: ManagerCancellationTask) => {
+    const request = pendingCancellationRequests[order.id];
+    if (!request) return;
+    setCancellingOrderId(order.id);
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      const discarded = await localHubRuntime.discardNativeCommandRequest(request.commandId);
+      await refreshNativeState();
+      setMessage(discarded
+        ? `The native Hub confirmed that the cancellation request for order ${order.id.slice(0, 8)} had no receipt and abandoned only its retry reservation. No cancellation event, order state, stock fact, audit fact, or outbox record was removed.`
+        : 'That cancellation request no longer has an uncommitted native reservation. The measured Hub state was refreshed.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The native Hub could not safely abandon this cancellation request.');
+    } finally {
+      setCancellingOrderId(null);
+      setSubmitting(false);
+    }
+  };
+
   const endNativeSession = async () => {
     setEndingNativeSession(true);
     setMessage(null);
@@ -220,6 +344,15 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
   const cloudState = health?.cloudStatus || 'UNKNOWN';
   const cloudIcon = cloudState === 'CONNECTED' ? <Cloud className="h-4 w-4" aria-hidden="true" /> : <CloudOff className="h-4 w-4" aria-hidden="true" />;
   const activeShift = context?.activeCashShift || null;
+  const cancellableOrders = context?.cancellableOrders || [];
+  const cancellableOrderIds = new Set(cancellableOrders.map((order) => order.id));
+  const cancellationTasks: ManagerCancellationTask[] = [
+    ...cancellableOrders,
+    ...Object.keys(pendingCancellationRequests)
+      .filter((orderId) => !cancellableOrderIds.has(orderId))
+      .map((id) => ({ id, status: 'RECOVERY' as const })),
+  ];
+  const hasPendingCancellation = Object.keys(pendingCancellationRequests).length > 0;
   const countedPreview = /^\d+(?:\.\d{1,2})?$/.test(countedCash.trim()) ? Number(countedCash) : null;
   const variancePreview = activeShift !== null && countedPreview !== null && Number.isFinite(countedPreview)
     ? Math.round((countedPreview - activeShift.expectedCash + Number.EPSILON) * 100) / 100
@@ -263,12 +396,13 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
           <section className="space-y-4 rounded-3xl border border-emerald-500/30 bg-slate-900 p-6">
             <div className="flex items-center gap-3"><Landmark className="h-6 w-6 text-emerald-300" aria-hidden="true" /><div><p className="text-xs font-semibold uppercase tracking-[0.15em] text-emerald-300">Cash shift open</p><h2 className="text-xl font-black">Drawer is locally accountable</h2></div></div>
             <dl className="grid gap-3 sm:grid-cols-2"><div className="rounded-2xl border border-slate-800 bg-slate-950 p-4"><dt className="text-xs text-slate-500">Opening float</dt><dd className="mt-1 text-xl font-black">{money.format(activeShift.openingFloat)}</dd></div><div className="rounded-2xl border border-slate-800 bg-slate-950 p-4"><dt className="text-xs text-slate-500">Expected cash</dt><dd className="mt-1 text-xl font-black text-emerald-300">{money.format(activeShift.expectedCash)}</dd></div><div className="rounded-2xl border border-slate-800 bg-slate-950 p-4"><dt className="text-xs text-slate-500">Captured cash sales</dt><dd className="mt-1 text-lg font-bold">{money.format(activeShift.cashSalesTotal)}</dd></div><div className="rounded-2xl border border-slate-800 bg-slate-950 p-4"><dt className="text-xs text-slate-500">Change returned</dt><dd className="mt-1 text-lg font-bold">{money.format(activeShift.cashChangeTotal)}</dd></div></dl>
+            <ManagerCancellationQueue tasks={cancellationTasks} pendingRequests={pendingCancellationRequests} cancellingOrderId={cancellingOrderId} submitting={submitting} onCancel={(order) => { void cancelPendingOrder(order); }} onAbandon={(order) => { void abandonPendingCancellation(order); }} />
             <div className="space-y-4 rounded-2xl border border-sky-500/30 bg-slate-950 p-4">
               <div><p className="text-xs font-semibold uppercase tracking-[0.15em] text-sky-200">Count and close</p><h3 className="mt-1 text-lg font-black">Record the physical drawer count</h3><p className="mt-1 text-sm leading-relaxed text-slate-400">The expected cash is measured from committed opening and capture facts. Enter the physical count; native code derives and records the final variance. The Hub rejects a close while this shift still has a pending order.</p></div>
               <label className="block text-sm font-semibold text-slate-200">Counted cash (ZAR)<input value={countedCash} inputMode="decimal" disabled={submitting || Boolean(pendingCloseRequest)} onChange={(event) => { setCountedCash(event.target.value); }} className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-3 text-base text-slate-100 disabled:opacity-50" aria-describedby="counted-cash-hint" /></label>
               <p id="counted-cash-hint" className="text-xs leading-relaxed text-slate-500">Use a non-negative amount with at most two decimals. The preview is not a cash fact; the native Hub validates the measured shift again when it commits.</p>
               <div className={`rounded-xl border p-3 text-sm ${variancePreview === null ? 'border-slate-700 bg-slate-900 text-slate-400' : variancePreview === 0 ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100' : variancePreview > 0 ? 'border-sky-500/30 bg-sky-500/10 text-sky-100' : 'border-amber-500/30 bg-amber-500/10 text-amber-100'}`}><strong className="block text-xs uppercase tracking-[0.12em]">Variance preview</strong><span className="mt-1 block font-black">{variancePreview === null ? 'Enter a valid count' : variancePreview === 0 ? 'Balanced · R 0.00' : `${variancePreview > 0 ? 'Over' : 'Short'} · ${money.format(Math.abs(variancePreview))}`}</span></div>
-              <button type="button" disabled={submitting} onClick={() => void closeShift()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-sky-300 px-4 py-3 text-sm font-black text-slate-950 hover:bg-sky-200 disabled:cursor-not-allowed disabled:opacity-50"><Landmark className="h-4 w-4" aria-hidden="true" />{submitting ? 'Committing locally…' : pendingCloseRequest ? 'Retry the same close request' : 'Close cash shift locally'}</button>
+              <button type="button" disabled={submitting || cancellableOrders.length > 0 || hasPendingCancellation} onClick={() => void closeShift()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-sky-300 px-4 py-3 text-sm font-black text-slate-950 hover:bg-sky-200 disabled:cursor-not-allowed disabled:opacity-50"><Landmark className="h-4 w-4" aria-hidden="true" />{submitting ? 'Committing locally…' : pendingCloseRequest ? 'Retry the same close request' : 'Close cash shift locally'}</button>
               {pendingCloseRequest && <button type="button" disabled={submitting} onClick={() => void abandonPendingCloseShift()} className="w-full rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs font-bold text-amber-100 hover:bg-amber-500/20 disabled:opacity-50">Abandon only if native confirms it never committed</button>}
               <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-100"><strong>Cash-up approval and bank deposit remain unavailable.</strong> A local close records only the count and variance; it does not claim approval, deposit, printing, physical custody transfer, or cloud acknowledgement.</p>
             </div>

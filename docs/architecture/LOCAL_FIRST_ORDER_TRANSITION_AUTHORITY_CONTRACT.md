@@ -120,6 +120,11 @@ captured `READY` orders and requests the existing `COLLECTED` transition; it
 does not prove physical handover, printing, notification, remote delivery, or
 cloud acknowledgement.
 
+The native pending-order cancellation workflow is defined in
+`LOCAL_FIRST_PENDING_ORDER_CANCELLATION_CONTRACT.md`. It uses the existing
+strict Cashier/Manager cancellation matrix and does not turn a cancellation
+into a payment reversal, refund, or delivery claim.
+
 ## Failure handling
 
 | Failure | Required behavior |

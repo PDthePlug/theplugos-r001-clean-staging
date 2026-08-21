@@ -66,8 +66,9 @@ cash-shift record.
    cash-drawer balance must equal its committed `expectedCash`.
 2. The Hub blocks close while any order bound to that shift remains in a
    pending payment state and is `PLACED`, `PREPARING`, or `READY`. Cashier or
-   Manager must resolve/cancel it first; a close never strands a payable order
-   behind a closed drawer.
+   Manager must resolve/cancel it first through the native pending-order
+   cancellation workflow; a close never strands a payable order behind a
+   closed drawer.
 3. `countedCash` is finite, non-negative, within the supported local limit,
    and has at most two decimal places. `cashVariance = countedCash - expectedCash`
    is derived, may be negative, and cannot be supplied independently.

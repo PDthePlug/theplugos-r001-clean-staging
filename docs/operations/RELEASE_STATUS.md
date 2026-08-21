@@ -5,7 +5,8 @@
   migrations, and environment-specific evidence records
 - **Last reconciled source:** the R003 native Cashier Hub authority foundation
   plus source-only order-transition, cash-capture, cash-collection,
-  cash-shift-close, native Kitchen, and native station-entry additions
+  pending-order-cancellation, cash-shift-close, native Kitchen, and native
+  station-entry additions
 - **Production mutation authority:** explicitly withheld
 
 ## What is true today
@@ -34,6 +35,11 @@ The source-only Manager cash-shift-close workflow can record an explicit
 physical count and Hub-derived variance after pending orders are resolved. It
 does not demonstrate cash-up approval, bank deposit, printing, physical
 custody transfer, or cloud acknowledgement.
+
+The source-only native pending-order-cancellation workflow exposes only the
+already-authorized `PENDING` cancellation transitions for Cashier/Manager
+roles. It does not demonstrate a refund, cash reversal, return, or cloud
+acknowledgement.
 
 The Android host now has a source-only native station-entry and local
 session-end path that does not borrow an Owner browser session. This does not
