@@ -10,6 +10,7 @@
 set -Eeuo pipefail
 umask 077
 
+readonly SCRIPT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 readonly STAGING_PROJECT_REF='dpqtgfxovmiwzkiuzoya'
 readonly INTERNAL_SCHEMAS='information_schema|pg_*|_analytics|_realtime|_supavisor|auth|etl|extensions|pgbouncer|realtime|storage|supabase_functions|supabase_migrations|cron|dbdev|graphql|graphql_public|net|pgmq|pgsodium|pgsodium_masks|pgtle|repack|tiger|tiger_data|timescaledb_*|_timescaledb_*|topology|vault'
 readonly DATA_EXCLUDED_SCHEMAS='information_schema|pg_*|graphql|graphql_public|pgsodium|pgsodium_masks|pgtle|repack|tiger|tiger_data|timescaledb_*|_timescaledb_*|topology|vault|etl|extensions|pgbouncer|realtime|supabase_migrations|_analytics|_realtime|_supavisor'
@@ -54,7 +55,7 @@ if [[ ! -d "$R001_CLONE_WORKDIR" ]]; then
   exit 35
 fi
 
-for command_name in pg_dump pg_dumpall sed uniq; do
+for command_name in node pg_dump pg_dumpall sed uniq; do
   if ! command -v "$command_name" >/dev/null 2>&1; then
     printf 'Missing required command: %s\n' "$command_name" >&2
     exit 36
@@ -186,5 +187,7 @@ source_pg pg_dump \
     filter_data_dump
   printf 'RESET ALL;\n'
 } > "$R001_CLONE_WORKDIR/history_data.sql"
+
+node "$SCRIPT_DIR/inspect-r001-schema-dump.mjs" "$R001_CLONE_WORKDIR/schema.sql"
 
 printf 'R001 read-only source dumps created in the protected operator directory.\n'

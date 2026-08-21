@@ -19,9 +19,10 @@
     "start": "node --env-file-if-exists=.env scripts/start-production.mjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
+    "test:r001-inspector": "node scripts/test-r001-schema-dump-inspector.mjs",
     "test": "vitest run",
     "test:r002": "node scripts/test-r002-migration.mjs",
-    "test:all": "npm run test:r002 && npm test"
+    "test:all": "npm run test:r001-inspector && npm run test:r002 && npm test"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

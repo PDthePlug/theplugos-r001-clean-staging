@@ -276,11 +276,16 @@ Inspect before restore:
 
 ```bash
 sha256sum "$R001_CLONE_WORKDIR"/*.sql > "$R001_CLONE_WORKDIR/dump.sha256"
-grep -Ein 'staff_credentials|staff_security_sessions|device_pairing_attempts|verify_staff_pin|pair_device_with_code|get_device_bootstrap' \
-  "$R001_CLONE_WORKDIR/schema.sql" && exit 43 || true
-grep -Ein '^[[:space:]]*(DROP|TRUNCATE|DELETE|UPDATE|INSERT)[[:space:]]' \
-  "$R001_CLONE_WORKDIR/schema.sql" && exit 44 || true
+node scripts/inspect-r001-schema-dump.mjs "$R001_CLONE_WORKDIR/schema.sql"
 ```
+
+The statement-aware inspector is required. It ignores SQL-like text in
+comments, literals, quoted identifiers, nested comments, and dollar-quoted
+function bodies, but rejects executable destructive/DML statements, CTE-hidden
+DML, and every R002 identifier. It fails closed on unterminated or ambiguous
+SQL. Do not replace it with a broad grep expression: R001 function bodies can
+legitimately contain DML and must not be misclassified as top-level restore
+SQL.
 
 The data dump legitimately contains `COPY` statements. Its contents must not
 be displayed in logs or included in evidence.
