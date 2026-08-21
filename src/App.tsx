@@ -1,7 +1,5 @@
 import React, { lazy, Suspense, useCallback, useEffect, useState } from 'react';
-import { PlugOSProvider } from '@plugos/react';
-import { sdk } from '@plugos/sdk';
-import { IndexedDBStorageAdapter } from '@plugos/core';
+import { localHubRuntime } from '@plugos/core';
 import type { NetworkHealth } from '@plugos/core';
 import type { Branch, StaffMember } from './types';
 import { WelcomeScreen, type BusinessAuthSession } from './screens/WelcomeScreen';
@@ -203,10 +201,13 @@ function MainOSApp() {
 
     const boot = async () => {
       try {
-        await sdk.boot({ storageAdapter: new IndexedDBStorageAdapter() });
+        // The browser shell must not boot the retired browser event, sync, or
+        // certificate kernels. Its only operational capability is a measured
+        // view of the native Hub bridge.
+        await localHubRuntime.boot();
         if (!mounted) return;
-        setHubHealth(sdk.hub.getNetworkHealth());
-        unsubscribeHub = sdk.hub.subscribe((snapshot: { networkHealth: NetworkHealth }) => {
+        setHubHealth(localHubRuntime.getNetworkHealth());
+        unsubscribeHub = localHubRuntime.subscribe((snapshot: { networkHealth: NetworkHealth }) => {
           if (mounted) setHubHealth(snapshot.networkHealth);
         });
       } catch (error) {
@@ -293,9 +294,5 @@ function MainOSApp() {
 }
 
 export default function App() {
-  return (
-    <PlugOSProvider sdk={sdk}>
-      <MainOSApp />
-    </PlugOSProvider>
-  );
+  return <MainOSApp />;
 }

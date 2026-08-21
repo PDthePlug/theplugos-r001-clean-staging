@@ -1,5 +1,18 @@
--- ThePlugOS Production Supabase Schema
--- Run this in the Supabase SQL Editor to provision all cross-device cloud persistence tables.
+-- QUARANTINED — NOT A DEPLOYMENT INPUT
+--
+-- This file is a historical browser-prototype schema recovered with the
+-- redesign archive. It contradicts the canonical ordered migrations under
+-- `supabase/migrations/` and the verified R001 production foundation (text
+-- IDs, JSON order items, broad browser-era policies, and obsolete device
+-- records). It must never be run in Supabase SQL Editor, the Supabase CLI, or
+-- a release workflow.
+--
+-- Retained only for forensic comparison. The release authority is:
+--   1. docs/operations/RELEASE_STATUS.md
+--   2. supabase/migrations/001_mvp_core.sql, then ordered migrations
+--   3. preflight/validation scripts and an accepted staging evidence record
+--
+-- ThePlugOS historical browser-prototype schema (forensic reference only)
 
 CREATE TABLE IF NOT EXISTS public.businesses (
     id TEXT PRIMARY KEY,

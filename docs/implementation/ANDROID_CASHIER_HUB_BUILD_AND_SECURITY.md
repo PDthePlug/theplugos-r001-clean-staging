@@ -1,6 +1,8 @@
 # Android Cashier Hub: build and security boundary
 
-- **Status:** Implementation foundation; native project has not yet been compiled in this workspace
+- **Status:** Implementation foundation; native source, wrapper, and package
+  lock are committed, but no Android build or physical-device evidence has been
+  produced in this workspace
 - **Applies to:** `android/` native host, `ThePlugOSLocalHub` Capacitor bridge, local encrypted ledger
 - **Authority:** ADR-003 and the Local-First Operational Command Contract
 
@@ -10,9 +12,9 @@ The committed Android host contains a Capacitor-native bridge and an inactive,
 fail-closed Cashier Hub service. The service has no default branch, device,
 certificate, queue, or cloud state. Until a server-verified authorization bundle
 is installed, it reports `NATIVE_HUB_REQUIRED` and will not open a local transport
-or accept a command. Bundle verification source is present in
-`HubEnrollmentCoordinator`, but no browser API can install a bundle and no cloud
-enrollment receiver is deployed yet.
+or accept a command. Bundle verification is native-only in
+`HubEnrollmentCoordinator`; the source also contains cloud enrollment receivers,
+but neither the R003 migration nor those receivers are deployed.
 
 When provisioned, the host is designed to provide:
 
@@ -38,18 +40,24 @@ device ID is never authority.
 
 ## Build prerequisites
 
-Use the repository's pinned Node 22.22.2/npm 11.9.0 toolchain and a supported
-Android Studio/SDK setup. Capacitor 8 supports Android API 24+; this host sets a
-minimum SDK of 24. Install the Capacitor dependencies before syncing the Android
-platform:
+Use the repository's pinned Node 22.22.2/npm 11.9.0 toolchain, **JDK 21**, and a
+supported Android Studio/SDK setup. Capacitor 8.5 requires Android API 24+ and a
+Java 21 toolchain; this host sets API 24/36/36. `@capacitor/core`,
+`@capacitor/android`, and `@capacitor/cli` are exact locked dependencies, and the
+Android Gradle wrapper is committed. From a clean checkout:
 
 ```bash
-npm install @capacitor/core@^8.5.0 @capacitor/android@^8.5.0
-npm install --save-dev @capacitor/cli@^8.5.0
-npm run build
-npx cap sync android
-npx cap open android
+npm ci
+npm run android:sync
+npm run android:assemble:debug
+# or: npm run android:open
 ```
+
+`android:sync` intentionally rebuilds the web bundle before Capacitor copies it
+into the Android host. `android:assemble:debug` invokes the committed Gradle
+wrapper, rather than relying on a globally installed Gradle. A release build
+must pass the issuer public-key map and cloud function URL through Gradle
+properties; an empty value fails closed by design.
 
 The Gradle host declares the current SQLCipher Android community package
 (`net.zetetic:sqlcipher-android:4.17.0`) and AndroidX SQLite (`2.6.2`). It uses
@@ -81,13 +89,14 @@ devices.
 The exact wire and renewal contract is documented in
 `docs/architecture/NATIVE_HUB_ENROLLMENT_AND_SYNC_PROTOCOL.md`.
 
-The current R002 RPC set is not deployed. No production R002 action or native
-enrollment is permitted until the R001 staging clone and R002 rehearsal gates
-are completed and accepted.
+The current R002/R003 database and Edge source is not deployed. No production
+R002/R003 action or native enrollment is permitted until the clean R001 staging
+clone and R002/R003 rehearsal gates are completed and accepted.
 
 ## Verification needed outside this workspace
 
-- Build with the pinned Node toolchain and Android SDK.
+- Build with the pinned Node/npm toolchain, JDK 21, and Android SDK through the
+  committed Gradle wrapper.
 - Run SQLCipher open/restart/rollback tests on a physical API 24+ Android device.
 - Run paired-device challenge/signature verification on separate Cashier and
   Kitchen devices.

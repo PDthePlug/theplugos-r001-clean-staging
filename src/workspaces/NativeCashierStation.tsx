@@ -1,6 +1,6 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { ArrowLeft, Cloud, CloudOff, Minus, Plus, ReceiptText, RefreshCw, ShieldCheck, ShoppingBasket, WifiOff } from 'lucide-react';
-import { sdk } from '@plugos/sdk';
+import { localHubRuntime } from '@plugos/core';
 import type { NativeHubCommandRequest, NativeHubOperatorContext, NetworkHealth } from '@plugos/core';
 
 interface NativeCashierStationProps {
@@ -50,11 +50,11 @@ export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onEx
 
   const refreshNativeState = useCallback(async () => {
     const [operator] = await Promise.all([
-      sdk.hub.getNativeOperatorContext(),
-      sdk.hub.refresh().catch(() => undefined),
+      localHubRuntime.getNativeOperatorContext(),
+      localHubRuntime.refresh().catch(() => undefined),
     ]);
     setContext(operator);
-    setHealth(sdk.hub.getNetworkHealth());
+    setHealth(localHubRuntime.getNetworkHealth());
   }, []);
 
   useEffect(() => {
@@ -64,7 +64,7 @@ export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onEx
       try {
         await refreshNativeState();
         if (!mounted) return;
-        unsubscribe = sdk.hub.subscribe((snapshot) => {
+        unsubscribe = localHubRuntime.subscribe((snapshot) => {
           if (mounted) setHealth(snapshot.networkHealth);
         });
       } catch (error) {
@@ -146,7 +146,7 @@ export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onEx
     setSubmitting(true);
     setMessage(null);
     try {
-      const receipt = await sdk.hub.submitNativeCommandRequest(request);
+      const receipt = await localHubRuntime.submitNativeCommandRequest(request);
       setPendingRequest(null);
       setBasket([]);
       await refreshNativeState();

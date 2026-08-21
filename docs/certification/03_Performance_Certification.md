@@ -1,5 +1,7 @@
 # 03. Performance Certification
 
+> **Release status: superseded / not evidence.** This historical artifact contains prototype or simulated claims and cannot authorize release. See [the current release status](../operations/RELEASE_STATUS.md).
+
 ## Benchmarks (Mock Hardware Baseline)
 - **Cold Boot (Kernel + SDK):** < 15ms.
 - **Warm Boot (Event Replay):** 10,000 events replayed and projected in < 200ms.

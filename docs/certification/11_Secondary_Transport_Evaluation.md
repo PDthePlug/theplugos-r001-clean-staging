@@ -1,5 +1,7 @@
 # Executive Engineering Directive 009: Secondary Transport Protocol Evaluation Report
 
+> **Release status: superseded / not evidence.** This historical artifact contains prototype or simulated claims and cannot authorize release. See [the current release status](../operations/RELEASE_STATUS.md).
+
 **Document ID:** DOC-CERT-TRANS-011  
 **Classification:** Executive Architecture Artifact  
 **Status:** CERTIFIED & APPROVED  

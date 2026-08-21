@@ -1,5 +1,7 @@
 # Executive Engineering Directive 010: Production Acceptance & Executive Readiness Report
 
+> **Release status: superseded / not evidence.** This historical artifact contains prototype or simulated claims and cannot authorize release. See [the current release status](../operations/RELEASE_STATUS.md).
+
 **Document ID:** DOC-CERT-READ-019  
 **Classification:** Executive Architecture Artifact  
 **Status:** FULLY CERTIFIED FOR PRODUCTION DEPLOYMENT  

@@ -1,5 +1,7 @@
 # 09. Production Release Checklist
 
+> **Release status: superseded / not evidence.** This historical artifact contains prototype or simulated claims and cannot authorize release. See [the current release status](../operations/RELEASE_STATUS.md).
+
 - [x] Architecture Audit Completed
 - [x] Security Audit Completed
 - [x] Performance Benchmarks Passed

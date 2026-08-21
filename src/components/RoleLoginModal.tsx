@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Building2, LockKeyhole, LogOut, Smartphone, WifiOff } from 'lucide-react';
-import { sdk } from '@plugos/sdk';
+import { localHubRuntime } from '@plugos/core';
 import { Branch, StaffMember } from '../types';
 import { NativeHubEnrollmentControl } from './NativeHubEnrollmentControl';
 
@@ -42,7 +42,7 @@ export const RoleLoginModal: React.FC<RoleLoginModalProps> = ({
     setOpeningNativeSignIn(true);
     setNativeMessage(null);
     try {
-      await sdk.hub.openNativeStaffSignIn();
+      await localHubRuntime.openNativeStaffSignIn();
       setNativeMessage('Native staff sign-in opened. Select your name and enter the PIN on the Android screen only.');
     } catch (error) {
       setNativeMessage(error instanceof Error ? error.message : 'The native staff sign-in screen could not be opened.');
@@ -58,7 +58,7 @@ export const RoleLoginModal: React.FC<RoleLoginModalProps> = ({
     try {
       // This is a native-only capability check. It deliberately does not pass
       // a staff identifier, PIN, session token, or role from the browser.
-      await sdk.hub.getNativeOperatorContext();
+      await localHubRuntime.getNativeOperatorContext();
       onOpenNativeStation();
     } catch (error) {
       setNativeMessage(error instanceof Error ? error.message : 'Complete native staff sign-in before opening the station.');

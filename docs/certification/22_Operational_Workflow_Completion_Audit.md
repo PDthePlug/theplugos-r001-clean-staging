@@ -1,5 +1,7 @@
 # Executive Engineering Directive 011: Operational Workflow Completion & Backend Audit
 
+> **Release status: superseded / not evidence.** This historical artifact contains prototype or simulated claims and cannot authorize release. See [the current release status](../operations/RELEASE_STATUS.md).
+
 **Document ID:** DOC-CERT-WORK-022  
 **Classification:** Executive Architecture Artifact  
 **Status:** CERTIFIED & APPROVED  

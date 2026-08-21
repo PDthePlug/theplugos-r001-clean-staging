@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { KeyRound, RefreshCw, Smartphone, Trash2 } from 'lucide-react';
-import { sdk } from '@plugos/sdk';
+import { localHubRuntime } from '@plugos/core';
 import { supabase } from '../lib/supabase';
 
 interface NativeHubEnrollmentControlProps {
@@ -74,7 +74,7 @@ export const NativeHubEnrollmentControl: React.FC<NativeHubEnrollmentControlProp
     setOpeningNative(true);
     setMessage(null);
     try {
-      await sdk.hub.openNativeEnrollment();
+      await localHubRuntime.openNativeEnrollment();
       setMessage('Native enrollment opened. Enter the code on the Android screen; it is never passed through the browser bridge.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The Android native enrollment screen could not be opened.');

@@ -1,5 +1,7 @@
 # Executive Engineering Directive 011: Device Pairing & Production Receipt Engine Certification
 
+> **Release status: superseded / not evidence.** This historical artifact contains prototype or simulated claims and cannot authorize release. See [the current release status](../operations/RELEASE_STATUS.md).
+
 **Document ID:** DOC-CERT-PAIR-021  
 **Classification:** Executive Architecture Artifact  
 **Status:** CERTIFIED & APPROVED  

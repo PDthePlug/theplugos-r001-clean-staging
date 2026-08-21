@@ -19,11 +19,15 @@ describe('Platform Core - Kernel Verification', () => {
     });
   });
 
-  it('should boot and mount storage successfully', async () => {
+  it('should boot storage and report an unavailable native Hub truthfully in a browser runtime', async () => {
     const adapter = new InMemoryStorageAdapter();
     await runtime.boot({ storageAdapter: adapter });
     const health = await healthEngine.evaluateSystemHealth();
-    expect(health.status).toBe('HEALTHY');
+    expect(health.status).toBe('DEGRADED');
+    expect(health.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ component: 'StorageEngine', status: 'HEALTHY' }),
+      expect.objectContaining({ component: 'LocalHubRuntime', status: 'DEGRADED' }),
+    ]));
   });
 
   it('should process events and project state deterministically', async () => {

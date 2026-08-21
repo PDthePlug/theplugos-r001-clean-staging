@@ -1,5 +1,7 @@
 # 10. Final Certification
 
+> **Release status: superseded / not evidence.** This historical artifact contains prototype or simulated claims and cannot authorize release. See [the current release status](../operations/RELEASE_STATUS.md).
+
 ## Engineering Recommendation
 Based on the completion of the core kernel, platform services, domain isolation paradigms, and the successful simulated certification of multiple reference domains, the engineering architecture of ThePlugOS is sound and mathematically resilient.
 

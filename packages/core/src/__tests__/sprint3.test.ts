@@ -12,17 +12,18 @@ describe('Phase 2 Sprint 3 - Synchronization Service', () => {
     await syncService.boot();
   });
 
-  it('should queue and sync events when online', async () => {
+  it('should retain events when online without a real cloud acknowledgement adapter', async () => {
     syncService.setNetworkStatus(true);
     
     // Simulate event publishing
     await eventEngine.publish('ord-1', 'order', 'CREATE', { items: [] });
     
-    // Wait for async sync simulated network
+    // A transport link is not an acknowledgement. The source must not emulate
+    // delivery when no receiver has been configured.
     await new Promise(r => setTimeout(r, 50));
 
     const outbox = await storageEngine.getAll(syncService['OUTBOX_COLLECTION']);
-    expect(outbox).toHaveLength(0); // Synced and removed
+    expect(outbox).toHaveLength(1);
   });
 
   it('should queue but not sync when offline', async () => {
@@ -36,17 +37,17 @@ describe('Phase 2 Sprint 3 - Synchronization Service', () => {
     expect(outbox).toHaveLength(1); // Still queued
   });
 
-  it('should drain queue upon reconnection', async () => {
+  it('should retain a queue upon reconnection until a real receiver acknowledges it', async () => {
     syncService.setNetworkStatus(false);
     await eventEngine.publish('ord-3', 'order', 'CREATE', { items: [] });
     
     let outbox = await storageEngine.getAll(syncService['OUTBOX_COLLECTION']);
     expect(outbox).toHaveLength(1);
 
-    syncService.setNetworkStatus(true); // Triggers drain
+    syncService.setNetworkStatus(true); // Tries the receiver path, but none exists.
     await new Promise(r => setTimeout(r, 50));
 
     outbox = await storageEngine.getAll(syncService['OUTBOX_COLLECTION']);
-    expect(outbox).toHaveLength(0);
+    expect(outbox).toHaveLength(1);
   });
 });

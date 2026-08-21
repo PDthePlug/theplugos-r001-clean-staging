@@ -9,9 +9,13 @@
 - Production project `iwbbwcaylpulcpvbfkdx` is read-only throughout this
   rehearsal. Do not run a migration, deploy an Edge Function, change Auth, or
   alter a row there.
-- Staging project `dpqtgfxovmiwzkiuzoya` must be recreated as an **exact R001
-  clone** using an approved database client/credential path. Do not hand-copy
-  rows or use `supabase/schema.sql`; it contradicts the canonical migrations.
+- Existing staging project `dpqtgfxovmiwzkiuzoya` contains incompatible
+  rehearsal artifacts and test data. Treat it as read-only comparison evidence:
+  do **not** reset, overwrite, or use it as a release target. Create a
+  replacement clean staging project, then rebuild it as an **exact R001 clone**
+  using an approved database client/credential path. Do not hand-copy rows or
+  use `supabase/quarantine/legacy-browser-prototype-schema.sql`; it contradicts
+  the canonical migrations.
 - The four unsupported live legacy PIN values must be handled under the
   separately approved owner-controlled reset/conversion plan. Never expose,
   guess, or copy them into a ticket, log, browser, or chat.
@@ -41,7 +45,7 @@ The Android staging build receives only public configuration:
 
 | Gradle property | Value |
 | --- | --- |
-| `THEPLUGOS_CLOUD_FUNCTIONS_BASE_URL` | `https://dpqtgfxovmiwzkiuzoya.supabase.co/functions/v1` |
+| `THEPLUGOS_CLOUD_FUNCTIONS_BASE_URL` | `https://<clean-staging-project-ref>.supabase.co/functions/v1` |
 | `THEPLUGOS_BUNDLE_ISSUER_KEYS_JSON` | JSON map from the issuer key ID to its **Base64URL SPKI public key**. It must match the private JWK above. |
 
 Do not put the issuer private JWK, service-role key, pairing codes, PINs, or

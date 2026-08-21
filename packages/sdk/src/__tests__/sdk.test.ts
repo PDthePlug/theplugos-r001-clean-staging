@@ -28,10 +28,15 @@ describe('Phase 3 Sprint 1 - Platform SDK', () => {
     expect(user!.userId).toBe('user_test-token');
   });
 
-  it('should expose system metrics', async () => {
+  it('should expose system metrics without claiming a browser has native Hub authority', async () => {
     await sdk.system.metrics.increment('test_metric', 5);
     const health = await sdk.system.health();
-    // Storage engine is mounted by sdk.boot
-    expect(health.status).toBe('HEALTHY');
+    // Storage is mounted by sdk.boot, while a browser must report the missing
+    // Android Hub capability as degraded instead of fabricating local authority.
+    expect(health.status).toBe('DEGRADED');
+    expect(health.results).toEqual(expect.arrayContaining([
+      expect.objectContaining({ component: 'StorageEngine', status: 'HEALTHY' }),
+      expect.objectContaining({ component: 'LocalHubRuntime', status: 'DEGRADED' }),
+    ]));
   });
 });

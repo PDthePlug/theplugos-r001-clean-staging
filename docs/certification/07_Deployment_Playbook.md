@@ -1,5 +1,7 @@
 # 07. Deployment Playbook
 
+> **Release status: superseded / not evidence.** This historical artifact contains prototype or simulated claims and cannot authorize release. See [the current release status](../operations/RELEASE_STATUS.md).
+
 ## Pre-Deployment
 1. Validate domain manifest via `npx plugos certify <domain>`.
 2. Run standard integration tests using `@plugos/testing`.

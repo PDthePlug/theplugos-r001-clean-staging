@@ -1,5 +1,7 @@
 # 04. Architecture Audit
 
+> **Release status: superseded / not evidence.** This historical artifact contains prototype or simulated claims and cannot authorize release. See [the current release status](../operations/RELEASE_STATUS.md).
+
 ## Dependency Graph
 - **Core Kernel:** Independent. Zero external domain dependencies.
 - **SDK:** Dependent only on Kernel.

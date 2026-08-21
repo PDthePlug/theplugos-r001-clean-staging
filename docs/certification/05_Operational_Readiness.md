@@ -1,5 +1,7 @@
 # 05. Operational Readiness
 
+> **Release status: superseded / not evidence.** This historical artifact contains prototype or simulated claims and cannot authorize release. See [the current release status](../operations/RELEASE_STATUS.md).
+
 ## Installation & Provisioning
 - Tablets and devices can be provisioned using a standard MDM (Mobile Device Management) pushing the compiled PWA/App bundle.
 - Initial branch bootstrapping pulls the domain manifest and historical snapshots.

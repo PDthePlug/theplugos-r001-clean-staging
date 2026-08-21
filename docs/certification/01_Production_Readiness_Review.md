@@ -1,5 +1,7 @@
 # 01. Production Readiness Review (PRR)
 
+> **Release status: superseded / not evidence.** This historical artifact contains prototype or simulated claims and cannot authorize release. See [the current release status](../operations/RELEASE_STATUS.md).
+
 ## Executive Summary
 The Production Readiness Review (PRR) for ThePlugOS evaluates the platform's ability to operate reliably in high-chaos, real-world environments (e.g., township fast-food operations). The review encompasses platform architecture, offline operations, synchronization, security, performance, and operational support.
 

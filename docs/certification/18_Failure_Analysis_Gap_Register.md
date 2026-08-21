@@ -1,5 +1,7 @@
 # Executive Engineering Directive 010: Failure Analysis, Gap Register & Remediation Log
 
+> **Release status: superseded / not evidence.** This historical artifact contains prototype or simulated claims and cannot authorize release. See [the current release status](../operations/RELEASE_STATUS.md).
+
 **Document ID:** DOC-CERT-GAP-018  
 **Classification:** Executive Architecture Artifact  
 **Status:** ALL GAPS RESOLVED & REMEDIATED  

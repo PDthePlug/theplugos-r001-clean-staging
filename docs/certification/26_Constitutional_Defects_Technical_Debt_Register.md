@@ -1,5 +1,7 @@
 # Executive Engineering Directive 012: Constitutional Gap, Defects & Technical Debt Register
 
+> **Release status: superseded / not evidence.** This historical artifact contains prototype or simulated claims and cannot authorize release. See [the current release status](../operations/RELEASE_STATUS.md).
+
 **Document ID:** DOC-CERT-GAPS-026  
 **Classification:** Executive Architecture Artifact  
 **Status:** ALL GAPS & DEFECTS REMEDIATED  

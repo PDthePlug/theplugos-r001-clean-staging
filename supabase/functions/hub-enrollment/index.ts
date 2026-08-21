@@ -100,7 +100,7 @@ async function completeEnrollment(client: ReturnType<typeof serviceClient>, body
   const proof = enrollmentChallengeBytes({
     requestId,
     challengeId,
-    nonce,
+    nonceBase64url: nonce,
     hubSigningPublicKeyBase64: signingPublicKeyBase64,
     hubTlsCertificateSha256: tlsCertificateSha256,
   });

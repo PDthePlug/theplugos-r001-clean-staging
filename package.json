@@ -16,6 +16,10 @@
     "dev": "vite --host 127.0.0.1 --port 5173 --strictPort",
     "dev:server": "node --env-file-if-exists=.env --import tsx server.ts",
     "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "android:sync": "npm run build && npx cap sync android",
+    "android:open": "npx cap open android",
+    "android:assemble:debug": "npm run android:sync && ./android/gradlew -p android :app:assembleDebug",
+    "android:assemble:release": "npm run android:sync && ./android/gradlew -p android :app:assembleRelease",
     "start": "node --env-file-if-exists=.env scripts/start-production.mjs",
     "clean": "rm -rf dist server.js",
     "lint": "tsc --noEmit",
@@ -24,9 +28,14 @@
     "test:r002": "node scripts/test-r002-migration.mjs",
     "test:hub-protocol": "node --experimental-strip-types scripts/test-hub-crypto-protocol.mjs",
     "test:r003-local-hub": "node scripts/test-r003-local-hub-contract.mjs",
-    "test:all": "npm run test:r001-inspector && npm run test:r002 && npm run test:hub-protocol && npm run test:r003-local-hub && npm test"
+    "test:browser-authority": "node scripts/test-browser-authority-boundary.mjs",
+    "test:android-host": "node scripts/test-android-host-contract.mjs",
+    "test:release-truth": "node scripts/test-release-truth.mjs",
+    "test:all": "npm run test:r001-inspector && npm run test:r002 && npm run test:hub-protocol && npm run test:r003-local-hub && npm run test:browser-authority && npm run test:android-host && npm run test:release-truth && npm test"
   },
   "dependencies": {
+    "@capacitor/android": "8.5.0",
+    "@capacitor/core": "8.5.0",
     "@google/genai": "^2.4.0",
     "@supabase/supabase-js": "^2.112.2",
     "@tailwindcss/vite": "^4.1.14",
@@ -44,6 +53,7 @@
     "vite": "^6.2.3"
   },
   "devDependencies": {
+    "@capacitor/cli": "8.5.0",
     "@electric-sql/pglite": "^0.5.4",
     "@testing-library/react": "^16.3.2",
     "@types/express": "^4.17.21",

@@ -1,5 +1,7 @@
 # 02. Security Certification
 
+> **Release status: superseded / not evidence.** This historical artifact contains prototype or simulated claims and cannot authorize release. See [the current release status](../operations/RELEASE_STATUS.md).
+
 ## Audit Summary
 - **Authentication:** Token-based authentication via `IdentityService`. Offline trust is established using cryptographically verified cached tokens.
 - **RBAC & Permissions:** `PermissionService` enforces explicit role-based access. Deny-by-default architecture prevents accidental exposure.
