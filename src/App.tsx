@@ -2,7 +2,7 @@ import React, { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { localHubRuntime } from '@plugos/core';
 import type { NetworkHealth } from '@plugos/core';
 import type { Branch, StaffMember } from './types';
-import { WelcomeScreen, type BusinessAuthSession } from './screens/WelcomeScreen';
+import { WelcomeScreen, type BusinessAuthSession, type OwnerAccessIdentity } from './screens/WelcomeScreen';
 import { supabase } from './lib/supabase';
 import { mapBranchRowToBranch, mapStaffRowToStaffMember } from './lib/mappers';
 
@@ -44,6 +44,40 @@ const OwnerAccessProblem = ({ message, onSignOut }: { message: string; onSignOut
   </main>
 );
 
+interface OwnerBusinessChoice {
+  id: string;
+  name: string;
+}
+
+const OwnerBusinessSelector = ({
+  businesses,
+  onChoose,
+  onSignOut,
+}: {
+  businesses: OwnerBusinessChoice[];
+  onChoose: (businessId: string) => void;
+  onSignOut: () => void;
+}) => (
+  <main className="min-h-screen bg-slate-950 p-6 text-slate-100 sm:flex sm:items-center sm:justify-center">
+    <section className="mx-auto w-full max-w-xl space-y-6 rounded-3xl border border-slate-800 bg-slate-900 p-6 shadow-2xl sm:p-8" aria-labelledby="owner-business-choice-title">
+      <div>
+        <span className="inline-flex rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-100">Owner context</span>
+        <h1 id="owner-business-choice-title" className="mt-4 text-2xl font-black tracking-tight">Choose the business to manage</h1>
+        <p className="mt-2 text-sm leading-relaxed text-slate-400">This browser loads one owner business foundation at a time. Your station, staff, and device authority remain inside the enrolled Android Cashier Hub.</p>
+      </div>
+      <div className="space-y-3">
+        {businesses.map((business) => (
+          <button key={business.id} type="button" onClick={() => onChoose(business.id)} className="w-full rounded-2xl border border-slate-700 bg-slate-950 p-4 text-left transition hover:border-amber-400 hover:bg-slate-900 focus:outline-none focus:ring-2 focus:ring-amber-400">
+            <span className="block text-xs font-semibold uppercase tracking-[0.14em] text-slate-500">Owner business</span>
+            <strong className="mt-1 block text-base text-white">{business.name}</strong>
+          </button>
+        ))}
+      </div>
+      <button type="button" onClick={onSignOut} className="text-sm font-semibold text-slate-400 hover:text-slate-100">Sign out safely</button>
+    </section>
+  </main>
+);
+
 interface OwnerContext {
   business: { id: string; name: string; onboarding_status: string; owner_id: string };
   branches: Branch[];
@@ -60,15 +94,25 @@ function MainOSApp() {
   const [businessAuth, setBusinessAuth] = useState<BusinessAuthSession | null>(null);
   const [branches, setBranches] = useState<Branch[]>([]);
   const [staffList, setStaffList] = useState<StaffMember[]>([]);
+  const [ownerBusinessChoices, setOwnerBusinessChoices] = useState<OwnerBusinessChoice[]>([]);
+  const [ownerSelectionOwnerId, setOwnerSelectionOwnerId] = useState<string | null>(null);
+  const [unboundOwnerId, setUnboundOwnerId] = useState<string | null>(null);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
   const [showNativeCashierStation, setShowNativeCashierStation] = useState(false);
   const [, setHubHealth] = useState<NetworkHealth | null>(null);
   const [ownerAccessError, setOwnerAccessError] = useState<string | null>(null);
+  const [recoveryMode, setRecoveryMode] = useState(() => {
+    if (typeof window === 'undefined') return false;
+    return new URLSearchParams(window.location.search).get('auth') === 'recovery';
+  });
 
   const clearBrowserContext = useCallback(() => {
     setBusinessAuth(null);
     setBranches([]);
     setStaffList([]);
+    setOwnerBusinessChoices([]);
+    setOwnerSelectionOwnerId(null);
+    setUnboundOwnerId(null);
     setShowSetupWizard(false);
     setShowNativeCashierStation(false);
     setOwnerAccessError(null);
@@ -77,8 +121,9 @@ function MainOSApp() {
   const signOut = useCallback(async () => {
     try {
       await supabase.auth.signOut();
-    } catch (error) {
-      console.warn('[OWNER_LOGOUT] Supabase sign-out warning:', error);
+    } catch {
+      // The local owner context is cleared even when a network interruption
+      // prevents remote token revocation from completing immediately.
     } finally {
       clearBrowserContext();
     }
@@ -124,11 +169,60 @@ function MainOSApp() {
     };
   }, []);
 
-  const acceptOwnerSession = useCallback(async (candidate: BusinessAuthSession) => {
+  const listOwnerBusinesses = useCallback(async (ownerId: string): Promise<OwnerBusinessChoice[]> => {
+    const [membershipResult, ownedBusinessResult] = await Promise.all([
+      supabase
+        .from('business_memberships')
+        .select('business_id, role, businesses(id, name, owner_id)')
+        .eq('user_id', ownerId)
+        .eq('role', 'OWNER'),
+      supabase
+        .from('businesses')
+        .select('id, name, owner_id')
+        .eq('owner_id', ownerId),
+    ]);
+
+    if (membershipResult.error || ownedBusinessResult.error) {
+      throw new Error('The owner business list could not be verified.');
+    }
+
+    const byId = new Map<string, OwnerBusinessChoice>();
+    for (const membership of membershipResult.data || []) {
+      const relationship = membership.businesses as unknown;
+      const business = (Array.isArray(relationship) ? relationship[0] : relationship) as {
+        id?: string;
+        name?: string;
+        owner_id?: string;
+      } | null;
+      // A browser owner context is stricter than a generic R001 membership:
+      // the business must still identify this account as its owner record.
+      if (business?.id && business.owner_id === ownerId) {
+        byId.set(business.id, { id: business.id, name: business.name || 'Business' });
+      }
+    }
+    for (const business of ownedBusinessResult.data || []) {
+      if (business.owner_id === ownerId) {
+        byId.set(business.id, { id: business.id, name: business.name || 'Business' });
+      }
+    }
+
+    return [...byId.values()].sort((left, right) => left.name.localeCompare(right.name));
+  }, []);
+
+  const acceptOwnerBusiness = useCallback(async ({ ownerId, businessId }: { ownerId: string; businessId: string }) => {
     try {
       setOwnerAccessError(null);
+      setOwnerBusinessChoices([]);
+      setOwnerSelectionOwnerId(null);
+      setUnboundOwnerId(null);
+      const candidate: BusinessAuthSession = {
+        businessId,
+        businessName: 'Business',
+        ownerId,
+        isOwner: true,
+      };
       const context = await loadOwnerContext(candidate);
-      const activeBranch = context.branches.find((branch) => branch.id === candidate.branchId) || context.branches[0];
+      const activeBranch = context.branches[0];
       const resolvedAuth: BusinessAuthSession = {
         businessId: context.business.id,
         businessName: context.business.name,
@@ -142,58 +236,57 @@ function MainOSApp() {
       setBranches(context.branches);
       setStaffList(context.staff);
       setShowSetupWizard(context.business.onboarding_status !== 'COMPLETED');
-    } catch (error) {
+    } catch {
       clearBrowserContext();
-      setOwnerAccessError(error instanceof Error ? error.message : 'The owner business context could not be verified.');
+      setOwnerAccessError('The owner business foundation could not be verified. No browser operational workspace was opened.');
     }
   }, [clearBrowserContext, loadOwnerContext]);
 
-  const restoreOwnerSession = useCallback(async (ownerId: string) => {
-    const { data: membership, error: membershipError } = await supabase
-      .from('business_memberships')
-      .select('business_id, role, businesses(id, name)')
-      .eq('user_id', ownerId)
-      .eq('role', 'OWNER')
-      .maybeSingle();
+  const acceptOwnerIdentity = useCallback(async (identity: OwnerAccessIdentity) => {
+    try {
+      setOwnerAccessError(null);
+      setBusinessAuth(null);
+      setBranches([]);
+      setStaffList([]);
+      setShowSetupWizard(false);
+      setShowNativeCashierStation(false);
+      setOwnerSelectionOwnerId(null);
+      setUnboundOwnerId(null);
 
-    if (membershipError) throw new Error(`Could not verify business membership: ${membershipError.message}`);
+      // A post-R001-creation preferred ID is only a routing hint. The next
+      // lookup still proves owner_id before the browser receives any context.
+      if (identity.preferredBusinessId) {
+        await acceptOwnerBusiness({ ownerId: identity.ownerId, businessId: identity.preferredBusinessId });
+        return;
+      }
 
-    let businessId = membership?.business_id || '';
-    let businessName = (membership?.businesses as { name?: string } | null)?.name || '';
-    if (!businessId) {
-      const { data: ownedBusiness, error: ownedBusinessError } = await supabase
-        .from('businesses')
-        .select('id, name')
-        .eq('owner_id', ownerId)
-        .maybeSingle();
-      if (ownedBusinessError) throw new Error(`Could not verify owner record: ${ownedBusinessError.message}`);
-      businessId = ownedBusiness?.id || '';
-      businessName = ownedBusiness?.name || '';
+      const businesses = await listOwnerBusinesses(identity.ownerId);
+      if (businesses.length === 0) {
+        setOwnerBusinessChoices([]);
+        setUnboundOwnerId(identity.ownerId);
+        return;
+      }
+      if (businesses.length === 1) {
+        await acceptOwnerBusiness({ ownerId: identity.ownerId, businessId: businesses[0].id });
+        return;
+      }
+      setOwnerBusinessChoices(businesses);
+      setOwnerSelectionOwnerId(identity.ownerId);
+    } catch {
+      clearBrowserContext();
+      setOwnerAccessError('The owner account could not be reconciled with a business foundation. No operational workspace was opened.');
     }
+  }, [acceptOwnerBusiness, clearBrowserContext, listOwnerBusinesses]);
 
-    if (!businessId) {
-      throw new Error('This authenticated account has no owner business. Staff and manager access must use the enrolled Android Cashier Hub.');
+  const completeRecovery = useCallback(async () => {
+    await signOut();
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      url.searchParams.delete('auth');
+      window.history.replaceState({}, document.title, `${url.pathname}${url.search}${url.hash}`);
     }
-
-    const { data: branch, error: branchError } = await supabase
-      .from('branches')
-      .select('id, name')
-      .eq('business_id', businessId)
-      .order('created_at', { ascending: true })
-      .limit(1)
-      .maybeSingle();
-    if (branchError) throw new Error(`Could not verify the initial branch: ${branchError.message}`);
-    if (!branch) throw new Error('This owner business has no branch. Resolve the R001 foundation before enabling a station.');
-
-    await acceptOwnerSession({
-      businessId,
-      businessName: businessName || 'Business',
-      branchId: branch.id,
-      branchName: branch.name,
-      ownerId,
-      isOwner: true,
-    });
-  }, [acceptOwnerSession]);
+    setRecoveryMode(false);
+  }, [signOut]);
 
   useEffect(() => {
     let mounted = true;
@@ -227,28 +320,52 @@ function MainOSApp() {
   useEffect(() => {
     let disposed = false;
     const restore = async () => {
+      if (recoveryMode) return;
       const { data: { session } } = await supabase.auth.getSession();
       if (!session?.user || disposed) return;
       try {
-        await restoreOwnerSession(session.user.id);
-      } catch (error) {
-        if (!disposed) setOwnerAccessError(error instanceof Error ? error.message : 'Owner session restoration failed.');
+        await acceptOwnerIdentity({ ownerId: session.user.id });
+      } catch {
+        if (!disposed) setOwnerAccessError('Owner session restoration could not establish a safe business context.');
       }
     };
 
     void restore();
-    const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
+    const { data: { subscription } } = supabase.auth.onAuthStateChange((event, session) => {
+      if (event === 'PASSWORD_RECOVERY') {
+        setRecoveryMode(true);
+        return;
+      }
       if (!session) clearBrowserContext();
     });
     return () => {
       disposed = true;
       subscription.unsubscribe();
     };
-  }, [clearBrowserContext, restoreOwnerSession]);
+  }, [acceptOwnerIdentity, clearBrowserContext, recoveryMode]);
 
   if (ownerAccessError) return <OwnerAccessProblem message={ownerAccessError} onSignOut={() => void signOut()} />;
 
-  if (!businessAuth) return <WelcomeScreen onLoginSuccess={(session) => void acceptOwnerSession(session)} />;
+  if (ownerBusinessChoices.length > 0 && ownerSelectionOwnerId) {
+    return (
+      <OwnerBusinessSelector
+        businesses={ownerBusinessChoices}
+        onChoose={(businessId) => void acceptOwnerBusiness({ ownerId: ownerSelectionOwnerId, businessId })}
+        onSignOut={() => void signOut()}
+      />
+    );
+  }
+
+  if (!businessAuth) {
+    return (
+      <WelcomeScreen
+        onLoginSuccess={(identity) => acceptOwnerIdentity(identity)}
+        recoveryMode={recoveryMode}
+        authenticatedOwnerId={unboundOwnerId}
+        onRecoveryComplete={() => completeRecovery()}
+      />
+    );
+  }
 
   if (showSetupWizard) {
     return (
