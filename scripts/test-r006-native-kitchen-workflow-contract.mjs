@@ -41,7 +41,7 @@ requireText(database, 'AND e.action = \'ORDER_PLACED\'');
 requireText(database, 'MAX_NATIVE_PENDING_KITCHEN_ORDERS');
 requireText(database, 'PENDING_KITCHEN_ORDER_STATUSES = setOf("PLACED", "PREPARING")');
 requireText(database, 'fun orderBelongsToScope(orderId: String, businessId: String, branchId: String): Boolean');
-requireText(database, "AND intent.command_type IN ('shift.open', 'order.create', 'order.status.transition', 'payment.capture')");
+requireText(database, "AND intent.command_type IN ('shift.open', 'shift.close', 'order.create', 'order.status.transition', 'payment.capture')");
 requireText(router, '.put("businessId", context.businessId)');
 requireText(router, '.put("branchId", context.branchId)');
 requireText(router, 'private fun requireOrderScope');

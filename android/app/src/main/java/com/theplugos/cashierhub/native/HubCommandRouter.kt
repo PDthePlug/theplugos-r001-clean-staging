@@ -14,6 +14,7 @@ class HubCommandRouter(private val database: HubDatabase) {
         HubPayloadSafety.rejectSensitiveValues(command.payload)
         return when (command.type) {
             "shift.open" -> openCashShift(command, context)
+            "shift.close" -> closeCashShift(command, context)
             "order.create" -> createOrder(command, context)
             "order.status.transition" -> transitionOrder(command, context)
             "payment.capture" -> captureCashPayment(command, context)
@@ -27,7 +28,7 @@ class HubCommandRouter(private val database: HubDatabase) {
             throw HubCommandRejectedException("A cash shift with this shiftId already exists on this Hub.")
         }
         if (database.activeCashShift(context.branchId) != null) {
-            throw HubCommandRejectedException("This branch already has an active cash shift. Close and cash up through the approved workflow before opening another.")
+            throw HubCommandRejectedException("This branch already has an active cash shift. Close it through the approved native close workflow before opening another.")
         }
         val openingFloat = requiredFiniteNonNegative(command.payload, "openingFloat", "Cash shift")
         if (openingFloat > MAX_CASH_AMOUNT) throw HubCommandRejectedException("Cash shift openingFloat exceeds the supported local limit.")
@@ -55,6 +56,72 @@ class HubCommandRouter(private val database: HubDatabase) {
                 ProjectionWrite("shifts", shiftId, localProjection),
                 ProjectionWrite("active_cash_shift", context.branchId, localProjection),
                 ProjectionWrite("financial_accounts", "${shiftId}:CASH_DRAWER", openingDrawer)
+            )
+        )
+    }
+
+    /** A close is a Manager-held cash-count fact, never a browser-derived
+     * balance. It keeps the existing shift and drawer history immutable while
+     * replacing only their current local projections in the same commit. */
+    private fun closeCashShift(command: OperationalCommand, context: VerifiedCommandContext): RoutedCommand {
+        val shiftId = command.payload.requiredUuid("shiftId", "Cash shift ID")
+        val activeCashShift = database.activeCashShift(context.branchId)
+            ?: throw HubCommandRejectedException("There is no active branch cash shift to close.")
+        if (activeCashShift.shiftId != shiftId) {
+            throw HubCommandRejectedException("The requested cash shift is not the active branch shift.")
+        }
+        if (database.hasPendingOrdersForCashShift(shiftId, context.businessId, context.branchId)) {
+            throw HubCommandRejectedException("Resolve or cancel every pending order in this cash shift before recording its close count.")
+        }
+        val shiftProjection = database.projection("shifts", shiftId)
+            ?: throw HubCommandRejectedException("The active cash shift projection is unavailable for close.")
+        requireCashShiftScope(shiftProjection, context)
+        val drawer = database.projection("financial_accounts", "${shiftId}:CASH_DRAWER")
+            ?: throw HubCommandRejectedException("The active cash-drawer projection is unavailable for close.")
+        val drawerBalance = requiredFiniteNonNegative(drawer, "balance", "Cash drawer")
+        if (!approximatelyEqual(drawerBalance, activeCashShift.expectedCash)) {
+            throw HubCommandRejectedException("The local cash-drawer balance does not match the active cash-shift total.")
+        }
+        val countedCash = requiredFiniteNonNegative(command.payload, "countedCash", "Cash-shift close")
+        if (countedCash > MAX_CASH_AMOUNT) throw HubCommandRejectedException("Cash-shift countedCash exceeds the supported local limit.")
+        val variance = roundMoney(countedCash - activeCashShift.expectedCash)
+        if (!variance.isFinite() || kotlin.math.abs(variance) > MAX_CASH_AMOUNT || !hasMoneyPrecision(variance)) {
+            throw HubCommandRejectedException("Cash-shift variance is outside the supported local range.")
+        }
+        val eventPayload = JSONObject()
+            .put("id", shiftId)
+            .put("shiftId", shiftId)
+            .put("status", "CLOSED")
+            .put("currency", "ZAR")
+            .put("expectedCash", activeCashShift.expectedCash)
+            .put("countedCash", countedCash)
+            .put("cashVariance", variance)
+        val closedShift = JSONObject(shiftProjection.toString())
+            .put("id", shiftId)
+            .put("shiftId", shiftId)
+            .put("status", "CLOSED")
+            .put("currency", "ZAR")
+            .put("expectedCash", activeCashShift.expectedCash)
+            .put("countedCash", countedCash)
+            .put("cashVariance", variance)
+            .put("businessId", context.businessId)
+            .put("branchId", context.branchId)
+        val closedDrawer = JSONObject()
+            .put("shiftId", shiftId)
+            .put("account", "CASH_DRAWER")
+            .put("currency", "ZAR")
+            .put("status", "CLOSED")
+            .put("expectedBalance", activeCashShift.expectedCash)
+            .put("countedBalance", countedCash)
+            .put("cashVariance", variance)
+        return RoutedCommand(
+            events = listOf(HubEventDraft(shiftId, "shift", "SHIFT_CLOSED", eventPayload)),
+            projections = listOf(
+                ProjectionWrite("shifts", shiftId, closedShift),
+                // Projections are append/replace only. A closed marker means
+                // there is no active shift and permits the next opening flow.
+                ProjectionWrite("active_cash_shift", context.branchId, closedShift),
+                ProjectionWrite("financial_accounts", "${shiftId}:CASH_DRAWER", closedDrawer)
             )
         )
     }
@@ -384,6 +451,17 @@ class HubCommandRouter(private val database: HubDatabase) {
         }
         if (!database.orderBelongsToScope(orderId, context.businessId, context.branchId)) {
             throw HubCommandRejectedException("The local order has no immutable placement event in this Hub authorization scope.")
+        }
+    }
+
+    private fun requireCashShiftScope(shift: JSONObject, context: VerifiedCommandContext) {
+        val businessId = shift.optString("businessId", "").trim()
+        val branchId = shift.optString("branchId", "").trim()
+        if (businessId != context.businessId || branchId != context.branchId) {
+            throw HubCommandRejectedException("The local cash-shift projection is outside this Hub authorization scope.")
+        }
+        if (shift.optString("status", "").trim() != "OPEN" || shift.optString("currency", "").trim() != "ZAR") {
+            throw HubCommandRejectedException("The local cash-shift projection is not open and valid for close.")
         }
     }
 

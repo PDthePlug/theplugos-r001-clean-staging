@@ -86,7 +86,7 @@ export interface DeviceRegistrationRequest {
  * active staff session, timestamp, sequence, and Keystore signature. */
 export interface NativeHubCommandRequest {
   commandId: string;
-  type: 'shift.open' | 'order.create' | 'order.status.transition' | 'payment.capture';
+  type: 'shift.open' | 'shift.close' | 'order.create' | 'order.status.transition' | 'payment.capture';
   payload: Record<string, unknown>;
 }
 

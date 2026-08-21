@@ -33,7 +33,9 @@ Cashier: order.create
   -> PLACED + PENDING tender intent + stock reservation
 Cashier: payment.capture (CASH only)
   -> CAPTURED + financial postings + shift totals
-Future: shift.close -> cashup.submit -> cashup.approve
+Manager: shift.close
+  -> physical count + derived variance + closed cash-shift fact
+Future: cashup.submit -> cashup.approve
 ```
 
 The shift is branch-scoped, Hub-scoped, and immutable in its opening facts. A
@@ -200,10 +202,12 @@ OPEN + card/QR intent --payment.capture--> UNAVAILABLE
 OPEN + PENDING order without cash tender --payment.capture--> REJECTED
 ```
 
-`shift.close`, `cashup.submit`, `cashup.approve`, refund, void-after-capture,
-and paid-out commands are not included. The native Manager screen must say so
-plainly. It must not fabricate a close count, variance, approval, or bank
-deposit.
+The shift-close contract is defined in
+`LOCAL_FIRST_CASH_SHIFT_CLOSE_CONTRACT.md`. It records a Manager's physical
+count and derived variance, but does not fabricate cash-up approval, bank
+deposit, printing, or cloud acknowledgement. `cashup.submit`,
+`cashup.approve`, refund, void-after-capture, and paid-out commands remain
+unavailable.
 
 ## Failure handling
 

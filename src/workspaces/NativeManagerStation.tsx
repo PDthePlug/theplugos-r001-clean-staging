@@ -9,6 +9,7 @@ interface NativeManagerStationProps {
 }
 
 type PendingOpenShiftRequest = NativeHubCommandRequest;
+type PendingCloseShiftRequest = NativeHubCommandRequest;
 
 const money = new Intl.NumberFormat('en-ZA', { style: 'currency', currency: 'ZAR' });
 
@@ -25,11 +26,11 @@ function createRequestUuid(): string {
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
-function parseMoney(value: string): number {
+function parseMoney(value: string, label: string): number {
   const normalized = value.trim();
   if (!/^\d+(?:\.\d{1,2})?$/.test(normalized)) throw new Error('Enter a non-negative Rand amount with no more than two decimal places.');
   const parsed = Number(normalized);
-  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 999_999_999.99) throw new Error('The opening float is outside the supported local range.');
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 999_999_999.99) throw new Error(`${label} is outside the supported local range.`);
   return Math.round((parsed + Number.EPSILON) * 100) / 100;
 }
 
@@ -37,17 +38,24 @@ function recoveredOpenShiftRequest(context: NativeHubOperatorContext): PendingOp
   return (context.recoverableNativeCommands || []).find((command) => command.type === 'shift.open') || null;
 }
 
-function requestShiftId(request: PendingOpenShiftRequest): string {
+function recoveredCloseShiftRequest(context: NativeHubOperatorContext): PendingCloseShiftRequest | null {
+  return (context.recoverableNativeCommands || []).find((command) => command.type === 'shift.close') || null;
+}
+
+function requestShiftId(request: NativeHubCommandRequest): string {
   return typeof request.payload.shiftId === 'string' ? request.payload.shiftId : 'unknown';
 }
 
-/** Native Manager surface for the first cash-custody command. It does not
- * invent shift close, cashup, approval, or variance workflows. */
+/** Native Manager surface for cash custody. The native Hub derives expected
+ * cash and records a physical count; this UI never declares a bank deposit,
+ * cash-up approval, or cloud acknowledgement. */
 export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onExit, onEndNativeSession }) => {
   const [context, setContext] = useState<NativeHubOperatorContext | null>(null);
   const [health, setHealth] = useState<NetworkHealth | null>(null);
   const [openingFloat, setOpeningFloat] = useState('0.00');
-  const [pendingRequest, setPendingRequest] = useState<PendingOpenShiftRequest | null>(null);
+  const [countedCash, setCountedCash] = useState('');
+  const [pendingOpenRequest, setPendingOpenRequest] = useState<PendingOpenShiftRequest | null>(null);
+  const [pendingCloseRequest, setPendingCloseRequest] = useState<PendingCloseShiftRequest | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [endingNativeSession, setEndingNativeSession] = useState(false);
@@ -59,10 +67,20 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
       localHubRuntime.refresh().catch(() => undefined),
     ]);
     setContext(operator);
-    const recovered = recoveredOpenShiftRequest(operator);
-    setPendingRequest(recovered);
-    if (recovered && typeof recovered.payload.openingFloat === 'number') {
-      setOpeningFloat(recovered.payload.openingFloat.toFixed(2));
+    const recoveredOpen = recoveredOpenShiftRequest(operator);
+    const recoveredClose = recoveredCloseShiftRequest(operator);
+    if (recoveredOpen && recoveredClose) {
+      throw new Error('The native Hub has unresolved opening and close requests. Reconcile the measured native state before issuing another cash-shift command.');
+    }
+    setPendingOpenRequest(recoveredOpen);
+    setPendingCloseRequest(recoveredClose);
+    if (recoveredOpen && typeof recoveredOpen.payload.openingFloat === 'number') {
+      setOpeningFloat(recoveredOpen.payload.openingFloat.toFixed(2));
+    }
+    if (recoveredClose && typeof recoveredClose.payload.countedCash === 'number') {
+      setCountedCash(recoveredClose.payload.countedCash.toFixed(2));
+    } else if (operator.activeCashShift) {
+      setCountedCash((current) => current.trim() === '' ? operator.activeCashShift!.expectedCash.toFixed(2) : current);
     }
     setHealth(localHubRuntime.getNetworkHealth());
   }, []);
@@ -92,20 +110,20 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
   const openShift = async () => {
     setSubmitting(true);
     setMessage(null);
-    let request = pendingRequest;
+    let request = pendingOpenRequest;
     try {
       if (!request) {
-        const amount = parseMoney(openingFloat);
+        const amount = parseMoney(openingFloat, 'The opening float');
         const shiftId = createRequestUuid();
         request = {
           commandId: createRequestUuid(),
           type: 'shift.open' as const,
           payload: { shiftId, openingFloat: amount },
         };
-        setPendingRequest(request);
+        setPendingOpenRequest(request);
       }
       const receipt = await localHubRuntime.submitNativeCommandRequest(request);
-      setPendingRequest(null);
+      setPendingOpenRequest(null);
       await refreshNativeState();
       setMessage(
         receipt.outcome === 'DUPLICATE'
@@ -120,17 +138,68 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
   };
 
   const abandonPendingOpenShift = async () => {
-    if (!pendingRequest) return;
+    if (!pendingOpenRequest) return;
     setSubmitting(true);
     setMessage(null);
     try {
-      const discarded = await localHubRuntime.discardNativeCommandRequest(pendingRequest.commandId);
+      const discarded = await localHubRuntime.discardNativeCommandRequest(pendingOpenRequest.commandId);
       await refreshNativeState();
       setMessage(discarded
         ? 'The native Hub confirmed that this opening request had no receipt and abandoned only its retry reservation. No shift, event, or outbox record was removed.'
         : 'That opening request no longer has an uncommitted native reservation. The measured Hub state was refreshed.');
     } catch (error) {
       setMessage(error instanceof Error ? error.message : 'The native Hub could not safely abandon this opening request.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const closeShift = async () => {
+    const activeShift = context?.activeCashShift;
+    if (!activeShift) {
+      setMessage('There is no measured open cash shift to close. Refresh the native Hub state before retrying.');
+      return;
+    }
+    setSubmitting(true);
+    setMessage(null);
+    let request = pendingCloseRequest;
+    try {
+      if (!request) {
+        const count = parseMoney(countedCash, 'The counted cash');
+        request = {
+          commandId: createRequestUuid(),
+          type: 'shift.close' as const,
+          payload: { shiftId: activeShift.id, countedCash: count },
+        };
+        setPendingCloseRequest(request);
+      }
+      const receipt = await localHubRuntime.submitNativeCommandRequest(request);
+      setPendingCloseRequest(null);
+      await refreshNativeState();
+      setMessage(
+        receipt.outcome === 'DUPLICATE'
+          ? `The exact close request for shift ${requestShiftId(request).slice(0, 8)} was already committed locally; no second count or variance fact was written.`
+          : `Cash shift ${requestShiftId(request).slice(0, 8)} was closed locally. ${receipt.outboxIds.length} event(s) remain queued until cloud acknowledgement if the link is unavailable.`,
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The native Hub could not close this cash shift. The same request can be retried safely after review.');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const abandonPendingCloseShift = async () => {
+    if (!pendingCloseRequest) return;
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      const discarded = await localHubRuntime.discardNativeCommandRequest(pendingCloseRequest.commandId);
+      await refreshNativeState();
+      setMessage(discarded
+        ? 'The native Hub confirmed that this close request had no receipt and abandoned only its retry reservation. No count, variance, event, shift state, or outbox record was removed.'
+        : 'That close request no longer has an uncommitted native reservation. The measured Hub state was refreshed.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The native Hub could not safely abandon this close request.');
     } finally {
       setSubmitting(false);
     }
@@ -151,6 +220,10 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
   const cloudState = health?.cloudStatus || 'UNKNOWN';
   const cloudIcon = cloudState === 'CONNECTED' ? <Cloud className="h-4 w-4" aria-hidden="true" /> : <CloudOff className="h-4 w-4" aria-hidden="true" />;
   const activeShift = context?.activeCashShift || null;
+  const countedPreview = /^\d+(?:\.\d{1,2})?$/.test(countedCash.trim()) ? Number(countedCash) : null;
+  const variancePreview = activeShift !== null && countedPreview !== null && Number.isFinite(countedPreview)
+    ? Math.round((countedPreview - activeShift.expectedCash + Number.EPSILON) * 100) / 100
+    : null;
 
   if (loading) {
     return <main className="min-h-screen bg-slate-950 p-6 text-slate-100"><p className="mx-auto max-w-lg rounded-2xl border border-slate-800 bg-slate-900 p-5 text-sm">Opening the measured native Manager station…</p></main>;
@@ -190,15 +263,23 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
           <section className="space-y-4 rounded-3xl border border-emerald-500/30 bg-slate-900 p-6">
             <div className="flex items-center gap-3"><Landmark className="h-6 w-6 text-emerald-300" aria-hidden="true" /><div><p className="text-xs font-semibold uppercase tracking-[0.15em] text-emerald-300">Cash shift open</p><h2 className="text-xl font-black">Drawer is locally accountable</h2></div></div>
             <dl className="grid gap-3 sm:grid-cols-2"><div className="rounded-2xl border border-slate-800 bg-slate-950 p-4"><dt className="text-xs text-slate-500">Opening float</dt><dd className="mt-1 text-xl font-black">{money.format(activeShift.openingFloat)}</dd></div><div className="rounded-2xl border border-slate-800 bg-slate-950 p-4"><dt className="text-xs text-slate-500">Expected cash</dt><dd className="mt-1 text-xl font-black text-emerald-300">{money.format(activeShift.expectedCash)}</dd></div><div className="rounded-2xl border border-slate-800 bg-slate-950 p-4"><dt className="text-xs text-slate-500">Captured cash sales</dt><dd className="mt-1 text-lg font-bold">{money.format(activeShift.cashSalesTotal)}</dd></div><div className="rounded-2xl border border-slate-800 bg-slate-950 p-4"><dt className="text-xs text-slate-500">Change returned</dt><dd className="mt-1 text-lg font-bold">{money.format(activeShift.cashChangeTotal)}</dd></div></dl>
-            <p className="rounded-2xl border border-amber-500/30 bg-amber-500/10 p-4 text-sm leading-relaxed text-amber-100"><strong>Shift close and cashup are intentionally unavailable.</strong> This source milestone can open and measure a cash drawer; it does not fabricate a count, variance, approval, bank deposit, or close event.</p>
+            <div className="space-y-4 rounded-2xl border border-sky-500/30 bg-slate-950 p-4">
+              <div><p className="text-xs font-semibold uppercase tracking-[0.15em] text-sky-200">Count and close</p><h3 className="mt-1 text-lg font-black">Record the physical drawer count</h3><p className="mt-1 text-sm leading-relaxed text-slate-400">The expected cash is measured from committed opening and capture facts. Enter the physical count; native code derives and records the final variance. The Hub rejects a close while this shift still has a pending order.</p></div>
+              <label className="block text-sm font-semibold text-slate-200">Counted cash (ZAR)<input value={countedCash} inputMode="decimal" disabled={submitting || Boolean(pendingCloseRequest)} onChange={(event) => { setCountedCash(event.target.value); }} className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-900 px-3 py-3 text-base text-slate-100 disabled:opacity-50" aria-describedby="counted-cash-hint" /></label>
+              <p id="counted-cash-hint" className="text-xs leading-relaxed text-slate-500">Use a non-negative amount with at most two decimals. The preview is not a cash fact; the native Hub validates the measured shift again when it commits.</p>
+              <div className={`rounded-xl border p-3 text-sm ${variancePreview === null ? 'border-slate-700 bg-slate-900 text-slate-400' : variancePreview === 0 ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100' : variancePreview > 0 ? 'border-sky-500/30 bg-sky-500/10 text-sky-100' : 'border-amber-500/30 bg-amber-500/10 text-amber-100'}`}><strong className="block text-xs uppercase tracking-[0.12em]">Variance preview</strong><span className="mt-1 block font-black">{variancePreview === null ? 'Enter a valid count' : variancePreview === 0 ? 'Balanced · R 0.00' : `${variancePreview > 0 ? 'Over' : 'Short'} · ${money.format(Math.abs(variancePreview))}`}</span></div>
+              <button type="button" disabled={submitting} onClick={() => void closeShift()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-sky-300 px-4 py-3 text-sm font-black text-slate-950 hover:bg-sky-200 disabled:cursor-not-allowed disabled:opacity-50"><Landmark className="h-4 w-4" aria-hidden="true" />{submitting ? 'Committing locally…' : pendingCloseRequest ? 'Retry the same close request' : 'Close cash shift locally'}</button>
+              {pendingCloseRequest && <button type="button" disabled={submitting} onClick={() => void abandonPendingCloseShift()} className="w-full rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs font-bold text-amber-100 hover:bg-amber-500/20 disabled:opacity-50">Abandon only if native confirms it never committed</button>}
+              <p className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs leading-relaxed text-amber-100"><strong>Cash-up approval and bank deposit remain unavailable.</strong> A local close records only the count and variance; it does not claim approval, deposit, printing, physical custody transfer, or cloud acknowledgement.</p>
+            </div>
           </section>
         ) : (
           <section className="mx-auto max-w-xl space-y-5 rounded-3xl border border-slate-800 bg-slate-900 p-6">
             <div><span className="inline-flex rounded-full border border-amber-500/30 bg-amber-500/10 px-3 py-1 text-xs font-semibold text-amber-100">Opening control</span><h2 className="mt-4 text-xl font-black">Open the branch cash shift</h2><p className="mt-2 text-sm leading-relaxed text-slate-400">The native Hub records one immutable opening float before a Cashier can create or capture a cash order.</p></div>
-            <label className="block text-sm font-semibold text-slate-200">Opening float (ZAR)<input value={openingFloat} inputMode="decimal" disabled={submitting || Boolean(pendingRequest)} onChange={(event) => { setOpeningFloat(event.target.value); }} className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-base text-slate-100 disabled:opacity-50" aria-describedby="opening-float-hint" /></label>
+            <label className="block text-sm font-semibold text-slate-200">Opening float (ZAR)<input value={openingFloat} inputMode="decimal" disabled={submitting || Boolean(pendingOpenRequest)} onChange={(event) => { setOpeningFloat(event.target.value); }} className="mt-2 w-full rounded-xl border border-slate-700 bg-slate-950 px-3 py-3 text-base text-slate-100 disabled:opacity-50" aria-describedby="opening-float-hint" /></label>
             <p id="opening-float-hint" className="text-xs leading-relaxed text-slate-500">Use a non-negative amount with at most two decimals. The Hub signs and commits the final value; this field does not create browser authority.</p>
-            <button type="button" disabled={submitting} onClick={() => void openShift()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-sm font-black text-slate-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"><Landmark className="h-4 w-4" aria-hidden="true" />{submitting ? 'Committing locally…' : pendingRequest ? 'Retry the same opening request' : 'Open cash shift locally'}</button>
-            {pendingRequest && <button type="button" disabled={submitting} onClick={() => void abandonPendingOpenShift()} className="w-full rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs font-bold text-amber-100 hover:bg-amber-500/20 disabled:opacity-50">Abandon only if native confirms it never committed</button>}
+            <button type="button" disabled={submitting} onClick={() => void openShift()} className="flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-sm font-black text-slate-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"><Landmark className="h-4 w-4" aria-hidden="true" />{submitting ? 'Committing locally…' : pendingOpenRequest ? 'Retry the same opening request' : 'Open cash shift locally'}</button>
+            {pendingOpenRequest && <button type="button" disabled={submitting} onClick={() => void abandonPendingOpenShift()} className="w-full rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs font-bold text-amber-100 hover:bg-amber-500/20 disabled:opacity-50">Abandon only if native confirms it never committed</button>}
           </section>
         )}
 

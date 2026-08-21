@@ -41,7 +41,7 @@ assert.ok(
 );
 
 requireText(verifier, '"CASHIER" -> setOf("order.create", "order.status.transition", "payment.capture")');
-requireText(verifier, '"MANAGER" -> setOf("order.status.transition", "shift.open")');
+requireText(verifier, '"MANAGER" -> setOf("order.status.transition", "shift.open", "shift.close")');
 assert.ok(!verifier.includes('"payment.refund"'), 'Unimplemented payment refund must not appear in native command authority.');
 assert.ok(!verifier.includes('"cashup.approve"'), 'Unimplemented cashup approval must not appear in native command authority.');
 
