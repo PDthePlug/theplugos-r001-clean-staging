@@ -1,0 +1,61 @@
+# ThePlugOS
+
+ThePlugOS is a local-first operating system for high-chaos small-business
+operations. The first domain is township fast food.
+
+> **Current status: HOLD — not production-ready.** Read
+> [the release status](docs/operations/RELEASE_STATUS.md) before using this
+> source against any Supabase project or operational device.
+
+## What this source currently provides
+
+- An owner-authenticated browser shell for the R001 business foundation.
+- A deliberately fail-closed Android-native Cashier Hub foundation: SQLCipher
+  local ledger, Android Keystore device keys, signed authorization bundles,
+  native PIN entry, durable outbox, and cloud-receiver source.
+- Ordered R001/R002/R003 migration source and staging-only Edge Function
+  source. These are not deployed.
+
+The browser does **not** provide operational authority, staff PIN entry,
+browser-to-browser LAN operation, payment settlement, or a live kitchen flow.
+Those functions remain gated until the stated staging and physical-device
+evidence exists.
+
+## Local source checks
+
+Use Node `22.22.2` and npm `11.9.0`:
+
+```bash
+npm ci
+npm run lint
+npm run build
+npm test
+```
+
+The complete repository gate is available as `npm run test:all`. It includes
+the R001/R002 source checks and native-Hub static contracts; it does not replace
+Supabase staging, Deno deployment, Android build, or hardware acceptance.
+
+## Android Cashier Hub
+
+Use JDK 21 and Android SDK API 36:
+
+```bash
+npm run android:sync
+npm run android:assemble:debug
+```
+
+The build has no default cloud endpoint or issuer key. Supply only staging or
+production-approved public configuration through Gradle properties, never
+browser variables or source control. See
+[the Android build and security guide](docs/implementation/ANDROID_CASHIER_HUB_BUILD_AND_SECURITY.md).
+
+## Database and release safety
+
+The only deployment inputs are the ordered files in `supabase/migrations/` and
+their corresponding preflight/validation scripts. Artifacts in
+`supabase/quarantine/` are forensic reference only and must not be applied.
+
+Do not run R002 or R003 on production. The required clean-staging sequence is
+documented in
+[the Hub-authority rehearsal](docs/implementation/STAGING_HUB_AUTHORITY_REHEARSAL.md).
