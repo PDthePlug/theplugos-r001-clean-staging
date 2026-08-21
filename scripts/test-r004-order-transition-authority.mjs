@@ -24,7 +24,7 @@ function requireText(subject, fragment, message = `Expected source to contain: $
 }
 
 requireText(contract, 'Authority matrix');
-requireText(contract, 'Safe-stop behavior before payment capture exists');
+requireText(contract, 'Safe-stop behavior around payment capture');
 requireText(contract, 'Cashier cancellation is limited to an unprepared, pending order');
 requireText(contract, 'Cashier or Manager');
 
@@ -40,9 +40,9 @@ assert.ok(
   'The broad kitchen-only post-check must be replaced by the explicit transition matrix.',
 );
 
-requireText(verifier, '"CASHIER" -> setOf("order.create", "order.status.transition")');
-requireText(verifier, '"MANAGER" -> setOf("order.status.transition")');
-assert.ok(!verifier.includes('"payment.capture"'), 'Unimplemented payment capture must not appear in native command authority.');
+requireText(verifier, '"CASHIER" -> setOf("order.create", "order.status.transition", "payment.capture")');
+requireText(verifier, '"MANAGER" -> setOf("order.status.transition", "shift.open")');
+assert.ok(!verifier.includes('"payment.refund"'), 'Unimplemented payment refund must not appear in native command authority.');
 assert.ok(!verifier.includes('"cashup.approve"'), 'Unimplemented cashup approval must not appear in native command authority.');
 
 requireText(migration, 'CREATE OR REPLACE FUNCTION private.r004_validate_hub_event_order_authority()');

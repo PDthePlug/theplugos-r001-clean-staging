@@ -30,9 +30,10 @@ PLACED -> PREPARING -> READY -> COLLECTED
 record payment capture, settlement, a cash count, or a successful card/QR
 provider result. The order therefore starts with `paymentStatus = PENDING`.
 
-The later Payment and Cashup contract will introduce `CAPTURED`, reversal,
-refund, and balanced financial-posting facts. Until that contract and handler
-exist, no path may present an order as paid, settled, or collected.
+The R005 Cash Shift and Capture contract introduces a **cash-only**
+`CAPTURED` fact and balanced financial postings. Card/QR capture, reversal,
+refund, cashup, and close remain separate contracts. No path may present an
+order as card/QR settled or completed outside those accepted facts.
 
 ## Authority matrix
 
@@ -73,10 +74,10 @@ cancellation also restores each original reservation in that same local
 transaction. An invalid transition leaves no event, projection update, stock
 movement, receipt, audit record, or outbox item.
 
-For the first native bridge, only `order.create` and
-`order.status.transition` are admissible types. The verifier must not list
-payment, inventory, shift, cashup, refund, or device commands as permitted
-until their routers and atomic contracts are implemented.
+The native bridge admits `shift.open` and cash-only `payment.capture` only
+because R005 implements their routers and atomic contracts. The verifier must
+not list card/QR capture, inventory, shift close, cashup, refund, or device
+commands as permitted until their own handlers exist.
 
 ## Cloud replica rule
 
@@ -93,13 +94,14 @@ second stock release. An event-ID collision, wrong role, stale previous status,
 or a status change that would collect/cancel a non-pending/non-captured order
 is rejected before the R003 projection function runs.
 
-## Safe-stop behavior before payment capture exists
+## Safe-stop behavior around payment capture
 
-All first-slice orders remain `PENDING`. Consequently, `READY -> COLLECTED`
-is intentionally unavailable in this source milestone. This is a safety
-constraint, not an incomplete status badge: a customer handover cannot be
-represented as an operationally complete sale before a real payment-capture
-command writes tender evidence and financial postings.
+Every new order begins `PENDING`. R005 may change that state to `CAPTURED`
+only for a cash order inside a Manager-opened cash shift. Consequently,
+`READY -> COLLECTED` remains unavailable for card/QR tender intents and every
+other unverified payment state. This is a safety constraint, not an incomplete
+status badge: customer handover requires a real, durable capture fact and its
+balanced financial postings.
 
 Cashier cancellation is limited to an unprepared, pending order. Manager
 cancellation is limited to an unprepared or preparing, pending order. Once a

@@ -22,7 +22,7 @@ JavaScript may call the native plugin with only:
 ```ts
 type NativeCommandRequest = {
   commandId: string; // UUID; stable across an exact retry
-  type: 'order.create' | 'order.status.transition';
+  type: 'shift.open' | 'order.create' | 'order.status.transition' | 'payment.capture';
   payload: Record<string, unknown>; // bounded, non-secret domain input
 };
 ```
@@ -35,6 +35,12 @@ before an intent reaches the command router.
 The first supported command families are intentionally limited to the domain
 handlers implemented by the native Hub. Unsupported command types fail rather
 than being recorded as generic events.
+
+`shift.open` and `payment.capture` follow
+`LOCAL_FIRST_CASH_SHIFT_AND_CAPTURE_CONTRACT.md`. The bridge can capture only
+cash inside a Manager-opened cash shift. A `CARD` or `SPAZAPAY_QR` order intent
+is not a provider capture and fails closed until a verified provider adapter is
+implemented.
 
 The bridge may also return a **non-secret operator view** only after a valid
 native session is active: display name, role, the signed catalog snapshot, VAT
@@ -67,6 +73,14 @@ stored intent and returns the existing receipt as `DUPLICATE`; a changed
 request with the same command ID is rejected. A prepared but uncommitted intent
 retains its sequence so a crash cannot cause a later request to reuse it.
 
+The native operator view may expose a current-session list of recoverable,
+**non-secret** task requests that have no receipt yet. JavaScript may submit
+one unchanged request again, or call `discardNativeCommandRequest(commandId)`.
+The latter is not a browser delete: the native Hub confirms the active session
+owns the intent and that no receipt exists before it removes only that
+reservation. It cannot delete a committed event, projection, audit fact, or
+cloud-outbox item.
+
 ## Bundle and restart rules
 
 Installing a renewed bundle replaces server authority facts atomically, but it
@@ -80,7 +94,8 @@ verification checks.
 
 - This does not authorize browser-originated device enrollment or PIN entry.
 - This does not make a browser tab a LAN terminal.
-- This does not add payment capture, inventory, shift, cash-up, refund, or
-  remote-device pairing handlers before their atomic domain contracts exist.
+- This does not add card/QR provider capture, inventory, shift close, cash-up,
+  refund, or remote-device pairing handlers before their atomic domain
+  contracts exist.
 - This is source implementation only until the required staging database and
   physical-device acceptance gates are complete.

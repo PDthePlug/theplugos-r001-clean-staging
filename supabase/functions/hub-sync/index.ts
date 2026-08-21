@@ -52,12 +52,34 @@ Deno.serve(async (request) => {
     const proof = syncRequestBytes({ requestId, hubDeviceId, bundleId, issuedAt, payloadBase64 });
     if (!await verifyP256DerSignature(key, proof, signature)) return genericFailure();
 
-    const receipt = object(await rpc<unknown>(client, 'r003_ingest_hub_events', {
-      p_hub_device_id: hubDeviceId,
-      p_bundle_id: bundleId,
-      p_events: payload.events,
-    }), 'Sync receipt');
-    return noStoreJson({ ok: true, acknowledgedEventIds: receipt.acknowledgedEventIds ?? [] });
+    // Preserve durable event order while routing each already-authenticated
+    // command family to its narrow database receiver. A payment must never
+    // leap ahead of its preceding order merely because all order actions were
+    // grouped together; consecutive receiver groups retain the Hub sequence.
+    const acknowledgedEventIds: unknown[] = [];
+    let receiver: HubEventReceiver | null = null;
+    let group: unknown[] = [];
+    const flush = async () => {
+      if (!receiver || group.length === 0) return;
+      const receipt = object(await rpc<unknown>(client, receiver, {
+        p_hub_device_id: hubDeviceId,
+        p_bundle_id: bundleId,
+        p_events: group,
+      }), 'Sync receipt');
+      if (!Array.isArray(receipt.acknowledgedEventIds)) throw new HubHttpError(400, 'Sync receipt is invalid.');
+      acknowledgedEventIds.push(...receipt.acknowledgedEventIds);
+    };
+    for (const event of payload.events) {
+      const nextReceiver = receiverForEvent(event);
+      if (receiver && nextReceiver !== receiver) {
+        await flush();
+        group = [];
+      }
+      receiver = nextReceiver;
+      group.push(event);
+    }
+    await flush();
+    return noStoreJson({ ok: true, acknowledgedEventIds });
   } catch (error) {
     if (error instanceof HubHttpError) return genericFailure(error.status === 413 ? 413 : 400);
     if (error instanceof HubConfigurationError) return genericFailure(503);
@@ -69,6 +91,16 @@ function deviceId(value: unknown): string {
   const result = string(value, 'Hub device ID', 200);
   if (!DEVICE_ID.test(result)) throw new HubHttpError(400, 'Hub device ID is invalid.');
   return result;
+}
+
+type HubEventReceiver = 'r003_ingest_hub_events' | 'r005_ingest_hub_financial_events';
+
+function receiverForEvent(value: unknown): HubEventReceiver {
+  const event = object(value, 'Sync event');
+  const action = string(event.action, 'Sync event action', 80);
+  if (action === 'ORDER_PLACED' || action === 'ORDER_STATUS_CHANGED') return 'r003_ingest_hub_events';
+  if (action === 'SHIFT_OPENED' || action === 'PAYMENT_CAPTURED') return 'r005_ingest_hub_financial_events';
+  throw new HubHttpError(400, 'Sync event action is invalid.');
 }
 
 function serviceClient() {

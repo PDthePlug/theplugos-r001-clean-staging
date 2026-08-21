@@ -37,8 +37,11 @@ BEGIN
         RAISE EXCEPTION 'R004_EVENT_SESSION_SCOPE_INVALID';
     END IF;
 
+    -- R005 expands the immutable envelope with shift/payment aggregates.
+    -- This order-specific guard must leave those later families to their own
+    -- receiver-side authority trigger rather than blocking a valid extension.
     IF NEW.aggregate_type <> 'order' THEN
-        RAISE EXCEPTION 'R004_EVENT_AGGREGATE_INVALID';
+        RETURN NEW;
     END IF;
 
     IF NEW.action = 'ORDER_PLACED' THEN

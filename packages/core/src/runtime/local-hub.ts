@@ -9,6 +9,7 @@ import {
   NativeHubCommandReceipt,
   NativeHubCommandRequest,
   NativeHubOperatorContext,
+  NativeHubRecoverableCommand,
   NetworkHealth,
   resolveNativeHubBridge,
   SecondaryTransportMetric,
@@ -22,6 +23,7 @@ export type {
   NativeHubCommandReceipt,
   NativeHubCommandRequest,
   NativeHubOperatorContext,
+  NativeHubRecoverableCommand,
   NetworkHealth,
   SecondaryTransportMetric
 } from './native-hub-bridge';
@@ -117,6 +119,12 @@ export class LocalHubRuntime {
     const receipt = await this.bridge.submitNativeCommandRequest(request);
     await this.refresh();
     return receipt;
+  }
+
+  public async discardNativeCommandRequest(commandId: string): Promise<boolean> {
+    const discarded = await this.bridge.discardNativeCommandRequest(commandId);
+    await this.refresh();
+    return discarded;
   }
 
   public async triggerSubnetScan(): Promise<DeviceNode[]> {

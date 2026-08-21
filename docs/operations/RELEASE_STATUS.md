@@ -16,8 +16,9 @@ mutate operational tables.
 The first operational slice is an Android-native Cashier Hub foundation. Its
 design is local-first: SQLCipher holds the local ledger, Android Keystore holds
 device keys, a signed authorization bundle establishes one branch authority,
-and cloud receivers replicate durable Hub events. The source contains the R003
-migration and Edge receiver implementation, but they are **not deployed**.
+and cloud receivers replicate durable Hub events. Source-only R004/R005 add
+order-transition authority and a cash-shift/cash-capture path, but no migration
+or Edge receiver is **deployed**.
 
 No claim of production readiness, live multi-device operation, payment
 settlement, completed order collection, kitchen delivery, printer delivery, or

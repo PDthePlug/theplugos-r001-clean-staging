@@ -165,6 +165,22 @@ class CashierHubRuntime(context: Context) {
         return submit(command)
     }
 
+    /** Native-only recovery boundary for a request which has no receipt and
+     * therefore no committed operational effect. JavaScript never supplies a
+     * session ID or deletes an event/outbox row directly. */
+    @Synchronized
+    internal fun discardNativeCommandRequest(commandId: String): Boolean {
+        val bundle = database.activeAuthorizationBundle()
+            ?: throw HubUnavailableException("The Hub has not been enrolled with an authorization bundle.")
+        val readiness = readiness(bundle)
+        if (readiness.availability != HubAvailability.READY) throw HubUnavailableException(readiness.message)
+        val nativeSession = database.activeNativeStaffSession(bundle.hubDeviceId, nowIso())
+            ?: throw HubUnavailableException("A fresh native staff sign-in is required before a command intent can be abandoned.")
+        val discarded = database.discardUncommittedNativeCommandIntent(commandId, nativeSession.sessionId)
+        if (discarded) notifyObservers()
+        return discarded
+    }
+
     /** Called only after the native HTTPS PIN flow has verified and installed
      * a signed bundle containing this exact session. */
     internal fun activateNativeStaffSession(staffSessionId: String) {
@@ -473,7 +489,9 @@ class CashierHubRuntime(context: Context) {
     }
 
     private companion object {
-        val NATIVE_BRIDGE_COMMAND_TYPES = setOf("order.create", "order.status.transition")
+        val NATIVE_BRIDGE_COMMAND_TYPES = setOf(
+            "shift.open", "order.create", "order.status.transition", "payment.capture"
+        )
         const val CLOUD_MAINTENANCE_INTERVAL_SECONDS = 30L
         const val RENEWAL_LEAD_MS = 30L * 60L * 1000L
         const val RENEWAL_RETRY_INTERVAL_MS = 5L * 60L * 1000L

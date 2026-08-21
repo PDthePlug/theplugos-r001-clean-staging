@@ -1,6 +1,6 @@
 import React, { lazy, Suspense, useCallback, useEffect, useState } from 'react';
 import { localHubRuntime } from '@plugos/core';
-import type { NetworkHealth } from '@plugos/core';
+import type { NativeHubOperatorContext, NetworkHealth } from '@plugos/core';
 import type { Branch, StaffMember } from './types';
 import { WelcomeScreen, type BusinessAuthSession, type OwnerAccessIdentity } from './screens/WelcomeScreen';
 import { supabase } from './lib/supabase';
@@ -14,6 +14,9 @@ const RoleLoginModal = lazy(() =>
 );
 const NativeCashierStation = lazy(() =>
   import('./workspaces/NativeCashierStation').then((module) => ({ default: module.NativeCashierStation }))
+);
+const NativeManagerStation = lazy(() =>
+  import('./workspaces/NativeManagerStation').then((module) => ({ default: module.NativeManagerStation }))
 );
 
 const OperatingSurfaceLoading = () => (
@@ -99,6 +102,7 @@ function MainOSApp() {
   const [unboundOwnerId, setUnboundOwnerId] = useState<string | null>(null);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
   const [showNativeCashierStation, setShowNativeCashierStation] = useState(false);
+  const [nativeStationRole, setNativeStationRole] = useState<NativeHubOperatorContext['role'] | null>(null);
   const [, setHubHealth] = useState<NetworkHealth | null>(null);
   const [ownerAccessError, setOwnerAccessError] = useState<string | null>(null);
   const [recoveryMode, setRecoveryMode] = useState(() => {
@@ -115,6 +119,7 @@ function MainOSApp() {
     setUnboundOwnerId(null);
     setShowSetupWizard(false);
     setShowNativeCashierStation(false);
+    setNativeStationRole(null);
     setOwnerAccessError(null);
   }, []);
 
@@ -250,6 +255,7 @@ function MainOSApp() {
       setStaffList([]);
       setShowSetupWizard(false);
       setShowNativeCashierStation(false);
+      setNativeStationRole(null);
       setOwnerSelectionOwnerId(null);
       setUnboundOwnerId(null);
 
@@ -391,10 +397,17 @@ function MainOSApp() {
   if (showNativeCashierStation) {
     return (
       <Suspense fallback={<OperatingSurfaceLoading />}>
-        <NativeCashierStation
-          onExit={() => setShowNativeCashierStation(false)}
-          onSignOut={() => void signOut()}
-        />
+        {nativeStationRole === 'MANAGER' ? (
+          <NativeManagerStation
+            onExit={() => { setShowNativeCashierStation(false); setNativeStationRole(null); }}
+            onSignOut={() => void signOut()}
+          />
+        ) : (
+          <NativeCashierStation
+            onExit={() => { setShowNativeCashierStation(false); setNativeStationRole(null); }}
+            onSignOut={() => void signOut()}
+          />
+        )}
       </Suspense>
     );
   }
@@ -406,7 +419,10 @@ function MainOSApp() {
         branches={branches}
         businessId={businessAuth.businessId}
         branchId={businessAuth.branchId}
-        onOpenNativeStation={() => setShowNativeCashierStation(true)}
+        onOpenNativeStation={(role) => {
+          setNativeStationRole(role);
+          setShowNativeCashierStation(true);
+        }}
         onSignOut={() => void signOut()}
       />
     </Suspense>

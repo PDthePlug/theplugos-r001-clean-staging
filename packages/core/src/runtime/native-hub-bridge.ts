@@ -86,7 +86,7 @@ export interface DeviceRegistrationRequest {
  * active staff session, timestamp, sequence, and Keystore signature. */
 export interface NativeHubCommandRequest {
   commandId: string;
-  type: 'order.create' | 'order.status.transition';
+  type: 'shift.open' | 'order.create' | 'order.status.transition' | 'payment.capture';
   payload: Record<string, unknown>;
 }
 
@@ -110,12 +110,40 @@ export interface NativeHubCatalogProduct {
   status: 'ACTIVE';
 }
 
+/** Measured native cash-drawer state. This is a projection of committed Hub
+ * events, not a browser-created shift or cash balance. */
+export interface NativeHubCashShift {
+  id: string;
+  status: 'OPEN';
+  openingFloat: number;
+  cashSalesTotal: number;
+  cashTenderedTotal: number;
+  cashChangeTotal: number;
+  expectedCash: number;
+}
+
+/** A Cashier's own local cash orders which still require a cash capture. */
+export interface NativeHubPendingCashOrder {
+  id: string;
+  status: 'PLACED' | 'PREPARING' | 'READY';
+  totalAmount: number;
+  paymentMethod: 'CASH';
+}
+
+/** A non-secret native task request which was reserved before signing but has
+ * no receipt yet. It may only be retried or explicitly abandoned by the
+ * current native staff session. */
+export interface NativeHubRecoverableCommand extends NativeHubCommandRequest {}
+
 /** Non-secret signed configuration data for a native station UI. */
 export interface NativeHubOperatorContext {
   staffName: string;
   role: 'CASHIER' | 'KITCHEN_STAFF' | 'MANAGER' | 'OWNER' | 'ADMINISTRATOR';
   vat: { enabled: boolean; rate: number };
   catalogProducts: NativeHubCatalogProduct[];
+  activeCashShift: NativeHubCashShift | null;
+  pendingCashOrders: NativeHubPendingCashOrder[];
+  recoverableNativeCommands: NativeHubRecoverableCommand[];
 }
 
 export class NativeHubCapabilityError extends Error {
@@ -137,6 +165,7 @@ export interface NativeHubBridge {
   openNativeStaffSignIn(): Promise<void>;
   getNativeOperatorContext(): Promise<NativeHubOperatorContext>;
   submitNativeCommandRequest(request: NativeHubCommandRequest): Promise<NativeHubCommandReceipt>;
+  discardNativeCommandRequest(commandId: string): Promise<boolean>;
   subscribe(listener: (snapshot: HubSnapshot) => void): Promise<() => void | Promise<void>>;
 }
 
@@ -174,6 +203,7 @@ interface CapacitorLocalHubPlugin {
   openNativeStaffSignIn?: () => Promise<{ opened: boolean }>;
   getNativeOperatorContext?: () => Promise<NativeHubOperatorContext>;
   submitNativeCommandRequest?: (request: NativeHubCommandRequest) => Promise<NativeHubCommandReceipt>;
+  discardNativeCommandRequest?: (request: { commandId: string }) => Promise<{ discarded: boolean }>;
   addListener?: (eventName: 'hubStateChanged', listener: (snapshot: HubSnapshot) => void) => Promise<CapacitorListenerHandle> | CapacitorListenerHandle;
 }
 
@@ -234,6 +264,10 @@ class UnavailableNativeHubBridge implements NativeHubBridge {
 
   async submitNativeCommandRequest(_: NativeHubCommandRequest): Promise<NativeHubCommandReceipt> {
     throw new NativeHubCapabilityError('Native operational command submission is unavailable in this browser build.');
+  }
+
+  async discardNativeCommandRequest(_: string): Promise<boolean> {
+    throw new NativeHubCapabilityError('Native operational command recovery is unavailable in this browser build.');
   }
 
   async subscribe(_: (snapshot: HubSnapshot) => void): Promise<() => void | Promise<void>> {
@@ -298,6 +332,17 @@ class CapacitorNativeHubBridge implements NativeHubBridge {
       throw new NativeHubCapabilityError('This Android build does not include native operational command submission.');
     }
     return this.plugin.submitNativeCommandRequest(request);
+  }
+
+  async discardNativeCommandRequest(commandId: string): Promise<boolean> {
+    if (!this.plugin.discardNativeCommandRequest) {
+      throw new NativeHubCapabilityError('This Android build does not include native operational command recovery.');
+    }
+    const response = await this.plugin.discardNativeCommandRequest({ commandId });
+    if (typeof response?.discarded !== 'boolean') {
+      throw new NativeHubCapabilityError('The native Hub returned an invalid command-recovery response.');
+    }
+    return response.discarded;
   }
 
   async subscribe(listener: (snapshot: HubSnapshot) => void): Promise<() => void | Promise<void>> {

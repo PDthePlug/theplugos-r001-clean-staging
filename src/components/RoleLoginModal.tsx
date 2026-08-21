@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { Building2, LockKeyhole, LogOut, Smartphone, WifiOff } from 'lucide-react';
 import { localHubRuntime } from '@plugos/core';
+import type { NativeHubOperatorContext } from '@plugos/core';
 import { Branch, StaffMember } from '../types';
 import { NativeHubEnrollmentControl } from './NativeHubEnrollmentControl';
 
@@ -9,7 +10,7 @@ interface RoleLoginModalProps {
   branches?: Branch[];
   businessId?: string;
   branchId?: string;
-  onOpenNativeStation?: () => void;
+  onOpenNativeStation?: (role: NativeHubOperatorContext['role']) => void;
   onSignOut?: () => void;
 }
 
@@ -58,8 +59,8 @@ export const RoleLoginModal: React.FC<RoleLoginModalProps> = ({
     try {
       // This is a native-only capability check. It deliberately does not pass
       // a staff identifier, PIN, session token, or role from the browser.
-      await localHubRuntime.getNativeOperatorContext();
-      onOpenNativeStation();
+      const context = await localHubRuntime.getNativeOperatorContext();
+      onOpenNativeStation(context.role);
     } catch (error) {
       setNativeMessage(error instanceof Error ? error.message : 'Complete native staff sign-in before opening the station.');
     } finally {
@@ -141,7 +142,7 @@ export const RoleLoginModal: React.FC<RoleLoginModalProps> = ({
             <button className="plug-station-submit mt-3" type="button" onClick={() => void openNativeStation()} disabled={openingNativeStation}>
               <span>
                 <small>After native sign-in</small>
-                <strong>{openingNativeStation ? 'Checking native session…' : 'Open native Cashier station'}</strong>
+                <strong>{openingNativeStation ? 'Checking native session…' : 'Open native station'}</strong>
               </span>
               <Smartphone aria-hidden="true" />
             </button>

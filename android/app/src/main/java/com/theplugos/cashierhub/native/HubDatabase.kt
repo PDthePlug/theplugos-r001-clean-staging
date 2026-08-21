@@ -455,8 +455,157 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
                 }
             }
         }
-        NativeOperatorContext(staffName, session.role, vat.first, vat.second, products)
+        val branchId = db.rawQuery(
+            "SELECT branch_id FROM authorization_bundles WHERE active = 1 LIMIT 1",
+            emptyArray()
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return@synchronized null
+            cursor.getString(0)
+        }
+        val activeCashShift = readActiveCashShift(db, branchId)
+        val pendingCashOrders = if (session.role == "CASHIER") {
+            readPendingCashOrdersForStaff(db, session.staffId)
+        } else {
+            emptyList()
+        }
+        val recoverableNativeCommands = readRecoverableNativeCommands(db, session.sessionId)
+        NativeOperatorContext(
+            staffName = staffName,
+            role = session.role,
+            vatEnabled = vat.first,
+            vatRate = vat.second,
+            catalogProducts = products,
+            activeCashShift = activeCashShift,
+            pendingCashOrders = pendingCashOrders,
+            recoverableNativeCommands = recoverableNativeCommands
+        )
     }
+
+    /** The active shift is a committed local projection keyed by branch. It
+     * is parsed defensively before a router or UI may rely on its totals. */
+    fun activeCashShift(branchId: String): NativeCashShift? = synchronized(monitor) {
+        readActiveCashShift(open(), branchId)
+    }
+
+    private fun readActiveCashShift(db: SQLiteDatabase, branchId: String): NativeCashShift? {
+        val value = db.rawQuery(
+            "SELECT value_json FROM projections WHERE projection_name = 'active_cash_shift' AND projection_key = ? LIMIT 1",
+            arrayOf(branchId)
+        ).use { cursor ->
+            if (!cursor.moveToFirst()) return null
+            JSONObject(cursor.getString(0))
+        }
+        val shiftId = value.optString("shiftId", value.optString("id", "")).trim()
+        try {
+            UUID.fromString(shiftId)
+        } catch (_: IllegalArgumentException) {
+            throw HubCommandRejectedException("The active cash shift projection has an invalid shift ID.")
+        }
+        if (value.optString("status", "").trim() != "OPEN" ||
+            value.optString("currency", "").trim() != "ZAR" ||
+            value.optString("branchId", "").trim() != branchId
+        ) {
+            throw HubCommandRejectedException("The active cash shift projection is invalid.")
+        }
+        val openingFloat = readCashMoney(value, "openingFloat")
+        val cashSalesTotal = readCashMoney(value, "cashSalesTotal")
+        val cashTenderedTotal = readCashMoney(value, "cashTenderedTotal")
+        val cashChangeTotal = readCashMoney(value, "cashChangeTotal")
+        val expectedCash = readCashMoney(value, "expectedCash")
+        if (kotlin.math.abs(expectedCash - roundCashMoney(openingFloat + cashSalesTotal)) > MONEY_EPSILON ||
+            cashTenderedTotal + MONEY_EPSILON < cashSalesTotal ||
+            cashChangeTotal < -MONEY_EPSILON ||
+            kotlin.math.abs(roundCashMoney(cashTenderedTotal - cashChangeTotal) - cashSalesTotal) > MONEY_EPSILON
+        ) {
+            throw HubCommandRejectedException("The active cash shift totals are inconsistent.")
+        }
+        return NativeCashShift(
+            shiftId = shiftId,
+            status = "OPEN",
+            openingFloat = openingFloat,
+            cashSalesTotal = cashSalesTotal,
+            cashTenderedTotal = cashTenderedTotal,
+            cashChangeTotal = cashChangeTotal,
+            expectedCash = expectedCash
+        )
+    }
+
+    /** Only the active Cashier's own PENDING cash orders are exposed to the
+     * native task UI. The event ledger, not a browser owner identity, binds a
+     * projection to its originator. */
+    private fun readPendingCashOrdersForStaff(db: SQLiteDatabase, staffId: String): List<NativePendingCashOrder> =
+        db.rawQuery(
+            """
+            SELECT projection_key, value_json
+            FROM projections p
+            WHERE p.projection_name = 'orders'
+              AND EXISTS (
+                  SELECT 1
+                  FROM events e
+                  WHERE e.aggregate_id = p.projection_key
+                    AND e.aggregate_type = 'order'
+                    AND e.action = 'ORDER_PLACED'
+                    AND e.staff_id = ?
+              )
+            ORDER BY p.updated_at DESC
+            LIMIT ?
+            """.trimIndent(),
+            arrayOf(staffId, MAX_NATIVE_PENDING_CASH_ORDERS.toString())
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    val orderId = cursor.getString(0)
+                    val value = JSONObject(cursor.getString(1))
+                    val status = value.optString("status", "").trim()
+                    val paymentStatus = value.optString("paymentStatus", "PENDING").trim()
+                    val paymentMethod = value.optString("paymentMethod", value.optString("paymentType", "")).trim()
+                    if (paymentStatus != "PENDING" || paymentMethod != "CASH" || status !in PENDING_CASH_ORDER_STATUSES) continue
+                    try {
+                        UUID.fromString(orderId)
+                    } catch (_: IllegalArgumentException) {
+                        throw HubCommandRejectedException("A native pending-cash order projection has an invalid order ID.")
+                    }
+                    add(NativePendingCashOrder(orderId, status, readCashMoney(value, "totalAmount"), paymentMethod))
+                }
+            }
+        }
+
+    /** A missing receipt proves no local command transaction committed: the
+     * receipt, events, projections, and outbox are one transaction. Only the
+     * currently active native staff session may see the matching non-secret
+     * task payload for an exact retry. */
+    private fun readRecoverableNativeCommands(db: SQLiteDatabase, staffSessionId: String): List<NativeRecoverableCommand> =
+        db.rawQuery(
+            """
+            SELECT intent.command_id, intent.command_type, intent.payload_json
+            FROM native_command_intents intent
+            LEFT JOIN command_receipts receipt ON receipt.command_id = intent.command_id
+            WHERE intent.staff_session_id = ?
+              AND receipt.command_id IS NULL
+              AND intent.command_type IN ('shift.open', 'order.create', 'payment.capture')
+            ORDER BY intent.created_at ASC, intent.sequence ASC
+            LIMIT ?
+            """.trimIndent(),
+            arrayOf(staffSessionId, MAX_RECOVERABLE_NATIVE_COMMANDS.toString())
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    val commandId = cursor.getString(0).trim()
+                    try {
+                        UUID.fromString(commandId)
+                    } catch (_: IllegalArgumentException) {
+                        throw HubCommandRejectedException("A recoverable native command has an invalid command ID.")
+                    }
+                    val type = cursor.getString(1).trim()
+                    if (type !in RECOVERABLE_NATIVE_COMMAND_TYPES) {
+                        throw HubCommandRejectedException("A recoverable native command has an unsupported type.")
+                    }
+                    val payload = JSONObject(cursor.getString(2))
+                    HubPayloadSafety.rejectSensitiveValues(payload)
+                    add(NativeRecoverableCommand(commandId, type, payload))
+                }
+            }
+        }
 
     /**
      * Reserves the native command identity before the KeyStore signs it. A
@@ -535,6 +684,38 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
             )
             db.setTransactionSuccessful()
             intent
+        } finally {
+            db.endTransaction()
+        }
+    }
+
+    /** Removes only an uncommitted intent for the current native session. A
+     * committed command has a receipt in the same SQLCipher transaction and
+     * can never be abandoned through this path. */
+    fun discardUncommittedNativeCommandIntent(commandId: String, staffSessionId: String): Boolean = synchronized(monitor) {
+        try {
+            UUID.fromString(commandId)
+        } catch (_: IllegalArgumentException) {
+            throw HubCommandRejectedException("Native command ID must be a UUID.")
+        }
+        val db = open()
+        db.beginTransaction()
+        try {
+            val intent = readNativeCommandIntent(db, commandId) ?: return@synchronized false
+            if (intent.staffSessionId != staffSessionId) {
+                throw HubCommandRejectedException("Only the originating native staff session may abandon this command intent.")
+            }
+            if (readReceipt(db, commandId) != null) {
+                throw HubCommandRejectedException("A committed native command cannot be abandoned; retry it to read its receipt.")
+            }
+            val removed = db.delete(
+                "native_command_intents",
+                "command_id = ? AND staff_session_id = ?",
+                arrayOf(commandId, staffSessionId)
+            )
+            if (removed != 1) throw HubCommandRejectedException("The native command intent could not be abandoned safely.")
+            db.setTransactionSuccessful()
+            true
         } finally {
             db.endTransaction()
         }
@@ -720,7 +901,11 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
             FROM cloud_outbox o
             JOIN events e ON e.event_id = o.event_id
             WHERE o.status IN ('PENDING', 'FAILED')
-            ORDER BY e.occurred_at ASC, e.sequence ASC, e.event_ordinal ASC
+            -- `cloud_outbox` is written in the same SQLCipher transaction as
+            -- each event. Its SQLite rowid is therefore the sole durable
+            -- cross-session commit order; staff-session sequence numbers are
+            -- intentionally not globally comparable.
+            ORDER BY o.rowid ASC
             LIMIT ?
             """.trimIndent(),
             arrayOf(boundedLimit.toString())
@@ -1118,6 +1303,19 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
         return buildList { for (index in 0 until array.length()) add(array.getString(index)) }
     }
 
+    private fun readCashMoney(value: JSONObject, field: String): Double {
+        if (!value.has(field)) throw HubCommandRejectedException("A native financial projection is missing $field.")
+        val amount = value.optDouble(field, Double.NaN)
+        if (!amount.isFinite() || amount < 0.0 || amount > MAX_CASH_AMOUNT ||
+            kotlin.math.abs(amount - roundCashMoney(amount)) > MONEY_EPSILON
+        ) {
+            throw HubCommandRejectedException("A native financial projection has an invalid $field value.")
+        }
+        return amount
+    }
+
+    private fun roundCashMoney(value: Double): Double = Math.round(value * 100.0) / 100.0
+
     private fun sameReceiptPrincipal(
         receipt: HubReceipt,
         command: OperationalCommand,
@@ -1208,5 +1406,11 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
         const val DATABASE_NAME = "theplugos_cashier_hub_v1.db"
         const val MAX_CLOUD_BATCH_EVENTS = 100
         const val MAX_SYNC_ERROR_CHARS = 160
+        const val MAX_NATIVE_PENDING_CASH_ORDERS = 100
+        const val MAX_RECOVERABLE_NATIVE_COMMANDS = 20
+        const val MAX_CASH_AMOUNT = 999_999_999.99
+        const val MONEY_EPSILON = 0.000_001
+        val PENDING_CASH_ORDER_STATUSES = setOf("PLACED", "PREPARING", "READY")
+        val RECOVERABLE_NATIVE_COMMAND_TYPES = setOf("shift.open", "order.create", "payment.capture")
     }
 }

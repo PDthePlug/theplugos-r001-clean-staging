@@ -81,6 +81,22 @@ class ThePlugOSLocalHubPlugin : Plugin() {
         }
     }
 
+    /** A recovery action, not an event mutation. Native code verifies that the
+     * current staff session owns an intent and that no receipt exists before
+     * removing its reservation. */
+    @PluginMethod
+    fun discardNativeCommandRequest(call: PluginCall) {
+        try {
+            val commandId = call.getString("commandId")?.trim()
+                ?: throw HubCommandRejectedException("A native command ID is required.")
+            call.resolve(JSObject().apply {
+                put("discarded", runtime().discardNativeCommandRequest(commandId))
+            })
+        } catch (error: IllegalStateException) {
+            call.reject(error.message ?: "The Hub could not abandon the command intent.")
+        }
+    }
+
     /** Opens a native-only pairing-code surface. The browser passes no code,
      * key, certificate, or authority data into this activity. */
     @PluginMethod
@@ -186,6 +202,36 @@ class ThePlugOSLocalHubPlugin : Plugin() {
                     put("stockQuantity", product.stockQuantity)
                     put("unit", product.unit)
                     put("status", product.status)
+                })
+            }
+        })
+        put("activeCashShift", context.activeCashShift?.let { shift ->
+            JSObject().apply {
+                put("id", shift.shiftId)
+                put("status", shift.status)
+                put("openingFloat", shift.openingFloat)
+                put("cashSalesTotal", shift.cashSalesTotal)
+                put("cashTenderedTotal", shift.cashTenderedTotal)
+                put("cashChangeTotal", shift.cashChangeTotal)
+                put("expectedCash", shift.expectedCash)
+            }
+        })
+        put("pendingCashOrders", JSArray().apply {
+            context.pendingCashOrders.forEach { order ->
+                put(JSObject().apply {
+                    put("id", order.orderId)
+                    put("status", order.status)
+                    put("totalAmount", order.totalAmount)
+                    put("paymentMethod", order.paymentMethod)
+                })
+            }
+        })
+        put("recoverableNativeCommands", JSArray().apply {
+            context.recoverableNativeCommands.forEach { command ->
+                put(JSObject().apply {
+                    put("commandId", command.commandId)
+                    put("type", command.type)
+                    put("payload", JSObject(command.payload.toString()))
                 })
             }
         })

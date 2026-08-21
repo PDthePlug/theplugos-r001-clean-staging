@@ -77,6 +77,11 @@ and cloud-replica rules are defined in
 `LOCAL_FIRST_ORDER_TRANSITION_AUTHORITY_CONTRACT.md`. A generic command type
 permission never substitutes for that transition matrix.
 
+The first cash-custody and cash-capture path is defined in
+`LOCAL_FIRST_CASH_SHIFT_AND_CAPTURE_CONTRACT.md`. It is deliberately limited
+to a Manager-opened cash shift and cash tender; no UI selection may stand in
+for a card/QR provider capture or a completed financial settlement.
+
 ## Event envelope
 
 Every locally committed event includes `eventId`, `commandId`, `aggregateType`,

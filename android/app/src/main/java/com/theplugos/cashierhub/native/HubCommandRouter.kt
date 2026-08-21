@@ -13,13 +13,55 @@ class HubCommandRouter(private val database: HubDatabase) {
     fun route(command: OperationalCommand, context: VerifiedCommandContext): RoutedCommand {
         HubPayloadSafety.rejectSensitiveValues(command.payload)
         return when (command.type) {
+            "shift.open" -> openCashShift(command, context)
             "order.create" -> createOrder(command, context)
             "order.status.transition" -> transitionOrder(command, context)
+            "payment.capture" -> captureCashPayment(command, context)
             else -> throw HubCommandRejectedException("Command ${command.type} is not implemented by this Hub release.")
         }
     }
 
+    private fun openCashShift(command: OperationalCommand, context: VerifiedCommandContext): RoutedCommand {
+        val shiftId = command.payload.requiredUuid("shiftId", "Cash shift ID")
+        if (database.projection("shifts", shiftId) != null) {
+            throw HubCommandRejectedException("A cash shift with this shiftId already exists on this Hub.")
+        }
+        if (database.activeCashShift(context.branchId) != null) {
+            throw HubCommandRejectedException("This branch already has an active cash shift. Close and cash up through the approved workflow before opening another.")
+        }
+        val openingFloat = requiredFiniteNonNegative(command.payload, "openingFloat", "Cash shift")
+        if (openingFloat > MAX_CASH_AMOUNT) throw HubCommandRejectedException("Cash shift openingFloat exceeds the supported local limit.")
+        val eventPayload = JSONObject()
+            .put("id", shiftId)
+            .put("shiftId", shiftId)
+            .put("status", "OPEN")
+            .put("currency", "ZAR")
+            .put("openingFloat", openingFloat)
+            .put("cashSalesTotal", 0.0)
+            .put("cashTenderedTotal", 0.0)
+            .put("cashChangeTotal", 0.0)
+            .put("expectedCash", openingFloat)
+        val localProjection = JSONObject(eventPayload.toString())
+            .put("businessId", context.businessId)
+            .put("branchId", context.branchId)
+        val openingDrawer = JSONObject()
+            .put("shiftId", shiftId)
+            .put("account", "CASH_DRAWER")
+            .put("currency", "ZAR")
+            .put("balance", openingFloat)
+        return RoutedCommand(
+            events = listOf(HubEventDraft(shiftId, "shift", "SHIFT_OPENED", eventPayload)),
+            projections = listOf(
+                ProjectionWrite("shifts", shiftId, localProjection),
+                ProjectionWrite("active_cash_shift", context.branchId, localProjection),
+                ProjectionWrite("financial_accounts", "${shiftId}:CASH_DRAWER", openingDrawer)
+            )
+        )
+    }
+
     private fun createOrder(command: OperationalCommand, context: VerifiedCommandContext): RoutedCommand {
+        val activeCashShift = database.activeCashShift(context.branchId)
+            ?: throw HubCommandRejectedException("A Manager must open the branch cash shift before a Cashier can create an order.")
         val orderId = command.payload.requiredOrderId()
         val items = command.payload.optJSONArray("items") ?: throw HubCommandRejectedException("Order creation requires line items.")
         if (items.length() == 0) throw HubCommandRejectedException("An order must contain at least one line item.")
@@ -63,6 +105,7 @@ class HubCommandRouter(private val database: HubDatabase) {
         // local router fail closed on a later collection/cancellation request.
         val orderProjection = JSONObject(eventPayload.toString())
             .put("paymentStatus", "PENDING")
+            .put("shiftId", activeCashShift.shiftId)
 
         return RoutedCommand(
             events = listOf(
@@ -125,22 +168,127 @@ class HubCommandRouter(private val database: HubDatabase) {
         )
     }
 
+    private fun captureCashPayment(command: OperationalCommand, context: VerifiedCommandContext): RoutedCommand {
+        val paymentId = command.payload.requiredUuid("paymentId", "Payment ID")
+        val orderId = command.payload.requiredOrderId()
+        if (database.projection("payments", paymentId) != null) {
+            throw HubCommandRejectedException("A payment with this paymentId already exists on this Hub.")
+        }
+        val order = database.projection("orders", orderId)
+            ?: throw HubCommandRejectedException("The order does not exist on this Hub.")
+        val orderStatus = order.optString("status", "").trim()
+        val paymentStatus = order.optString("paymentStatus", "PENDING").trim()
+        val paymentMethod = order.optString("paymentMethod", order.optString("paymentType", "")).trim()
+        if (orderStatus !in CAPTURABLE_ORDER_STATUSES || paymentStatus != "PENDING") {
+            throw HubCommandRejectedException("This order is not awaiting a capturable payment.")
+        }
+        if (paymentMethod != "CASH") {
+            throw HubUnavailableException("Only cash capture is available on this Hub release. Card and QR tender intents require a verified provider adapter.")
+        }
+        val activeCashShift = database.activeCashShift(context.branchId)
+            ?: throw HubCommandRejectedException("A Manager must open the branch cash shift before a Cashier can capture cash.")
+        val orderShiftId = order.optString("shiftId", "").trim()
+        if (orderShiftId != activeCashShift.shiftId) {
+            throw HubCommandRejectedException("This pending order is not bound to the active branch cash shift.")
+        }
+        val shiftProjection = database.projection("shifts", activeCashShift.shiftId)
+            ?: throw HubCommandRejectedException("The active cash shift projection is unavailable for payment capture.")
+        val amount = requiredFiniteNonNegative(order, "totalAmount", "Order")
+        if (amount > MAX_CASH_AMOUNT) throw HubCommandRejectedException("Order total exceeds the supported cash-capture limit.")
+        val cashTendered = requiredFiniteNonNegative(command.payload, "cashTendered", "Cash payment")
+        if (cashTendered > MAX_CASH_AMOUNT || cashTendered + MONEY_EPSILON < amount) {
+            throw HubCommandRejectedException("Cash tendered must cover the Hub-derived order total.")
+        }
+        val changeDue = roundMoney(cashTendered - amount)
+        if (changeDue < 0 || changeDue > MAX_CASH_AMOUNT) throw HubCommandRejectedException("Cash change due is outside the supported local range.")
+        val nextSalesTotal = roundMoney(activeCashShift.cashSalesTotal + amount)
+        val nextTenderedTotal = roundMoney(activeCashShift.cashTenderedTotal + cashTendered)
+        val nextChangeTotal = roundMoney(activeCashShift.cashChangeTotal + changeDue)
+        val nextExpectedCash = roundMoney(activeCashShift.openingFloat + nextSalesTotal)
+        if (nextSalesTotal > MAX_CASH_AMOUNT || nextTenderedTotal > MAX_CASH_AMOUNT ||
+            nextChangeTotal > MAX_CASH_AMOUNT || nextExpectedCash > MAX_CASH_AMOUNT
+        ) {
+            throw HubCommandRejectedException("This payment would exceed the supported local cash-shift limit.")
+        }
+
+        val postings = org.json.JSONArray()
+            .put(JSONObject().put("account", "CASH_DRAWER").put("debit", amount).put("credit", 0.0))
+            .put(JSONObject().put("account", "ORDER_SETTLEMENT_CLEARING").put("debit", 0.0).put("credit", amount))
+        val eventPayload = JSONObject()
+            .put("id", paymentId)
+            .put("paymentId", paymentId)
+            .put("orderId", orderId)
+            .put("shiftId", activeCashShift.shiftId)
+            .put("tender", "CASH")
+            .put("status", "CAPTURED")
+            .put("currency", "ZAR")
+            .put("amount", amount)
+            .put("cashTendered", cashTendered)
+            .put("changeDue", changeDue)
+            .put("financialPostings", postings)
+        val updatedOrder = JSONObject(order.toString())
+            .put("paymentStatus", "CAPTURED")
+            .put("paymentId", paymentId)
+            .put("cashTendered", cashTendered)
+            .put("changeDue", changeDue)
+        val updatedShift = JSONObject(shiftProjection.toString())
+            .put("cashSalesTotal", nextSalesTotal)
+            .put("cashTenderedTotal", nextTenderedTotal)
+            .put("cashChangeTotal", nextChangeTotal)
+            .put("expectedCash", nextExpectedCash)
+        val cashDrawer = database.projection("financial_accounts", "${activeCashShift.shiftId}:CASH_DRAWER")
+        val previousDrawerBalance = cashDrawer?.optDouble("balance", activeCashShift.openingFloat) ?: activeCashShift.openingFloat
+        if (!previousDrawerBalance.isFinite() || previousDrawerBalance < 0 || !hasMoneyPrecision(previousDrawerBalance)) {
+            throw HubCommandRejectedException("The local cash-drawer projection is invalid.")
+        }
+        if (!approximatelyEqual(previousDrawerBalance, activeCashShift.expectedCash)) {
+            throw HubCommandRejectedException("The local cash-drawer balance does not match the active cash-shift total.")
+        }
+        val nextDrawerBalance = roundMoney(previousDrawerBalance + amount)
+        if (nextDrawerBalance > MAX_CASH_AMOUNT) throw HubCommandRejectedException("This payment exceeds the supported local cash-drawer limit.")
+        val updatedDrawer = JSONObject()
+            .put("shiftId", activeCashShift.shiftId)
+            .put("account", "CASH_DRAWER")
+            .put("currency", "ZAR")
+            .put("balance", nextDrawerBalance)
+
+        return RoutedCommand(
+            events = listOf(HubEventDraft(paymentId, "payment", "PAYMENT_CAPTURED", eventPayload)),
+            projections = listOf(
+                ProjectionWrite("orders", orderId, updatedOrder),
+                ProjectionWrite("payments", paymentId, eventPayload),
+                ProjectionWrite("shifts", activeCashShift.shiftId, updatedShift),
+                ProjectionWrite("active_cash_shift", context.branchId, updatedShift),
+                ProjectionWrite("financial_accounts", "${activeCashShift.shiftId}:CASH_DRAWER", updatedDrawer)
+            )
+        )
+    }
+
     private fun JSONObject.requiredOrderId(): String {
         val value = optString("orderId", optString("id", "")).trim()
-        if (value.isEmpty()) throw HubCommandRejectedException("Order command requires orderId.")
+        return requireUuid(value, "Order command requires orderId.")
+    }
+
+    private fun JSONObject.requiredUuid(field: String, subject: String): String {
+        val value = optString(field, "").trim()
+        return requireUuid(value, "$subject is required.")
+    }
+
+    private fun requireUuid(value: String, missingMessage: String): String {
+        if (value.isEmpty()) throw HubCommandRejectedException(missingMessage)
         try {
             UUID.fromString(value)
         } catch (_: IllegalArgumentException) {
-            throw HubCommandRejectedException("Order command requires a UUID orderId.")
+            throw HubCommandRejectedException("$missingMessage It must be a UUID.")
         }
         return value
     }
 
-    private fun requiredFiniteNonNegative(payload: JSONObject, name: String): Double {
-        if (!payload.has(name)) throw HubCommandRejectedException("Order creation requires $name.")
+    private fun requiredFiniteNonNegative(payload: JSONObject, name: String, subject: String = "Order creation"): Double {
+        if (!payload.has(name)) throw HubCommandRejectedException("$subject requires $name.")
         val value = payload.optDouble(name, Double.NaN)
         if (!value.isFinite() || value < 0 || !hasMoneyPrecision(value)) {
-            throw HubCommandRejectedException("Order $name must be a finite non-negative currency amount.")
+            throw HubCommandRejectedException("$subject $name must be a finite non-negative currency amount.")
         }
         return value
     }
@@ -324,10 +472,12 @@ class HubCommandRouter(private val database: HubDatabase) {
         const val MAX_ORDER_LINE_ITEMS = 100
         const val MAX_LINE_QUANTITY = 1_000_000.0
         const val MAX_ORDER_TOTAL = 999_999_999.99
+        const val MAX_CASH_AMOUNT = 999_999_999.99
         const val MAX_STOCK_QUANTITY = 99_999_999_999.999
         const val MAX_ITEM_NAME_LENGTH = 500
         const val MONEY_EPSILON = 0.000_001
         const val QUANTITY_EPSILON = 0.000_001
         val SUPPORTED_TENDER_INTENTS = setOf("CASH", "CARD", "SPAZAPAY_QR")
+        val CAPTURABLE_ORDER_STATUSES = setOf("PLACED", "PREPARING", "READY")
     }
 }

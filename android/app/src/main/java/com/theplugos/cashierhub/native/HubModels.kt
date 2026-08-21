@@ -191,7 +191,10 @@ data class NativeOperatorContext(
     val role: String,
     val vatEnabled: Boolean,
     val vatRate: Double,
-    val catalogProducts: List<NativeCatalogProduct>
+    val catalogProducts: List<NativeCatalogProduct>,
+    val activeCashShift: NativeCashShift?,
+    val pendingCashOrders: List<NativePendingCashOrder>,
+    val recoverableNativeCommands: List<NativeRecoverableCommand>
 )
 
 data class NativeCatalogProduct(
@@ -202,6 +205,36 @@ data class NativeCatalogProduct(
     val stockQuantity: Double,
     val unit: String,
     val status: String
+)
+
+/** Non-secret, measured cash-drawer facts. These values are projections of
+ * committed Hub events, never browser-entered balances. */
+data class NativeCashShift(
+    val shiftId: String,
+    val status: String,
+    val openingFloat: Double,
+    val cashSalesTotal: Double,
+    val cashTenderedTotal: Double,
+    val cashChangeTotal: Double,
+    val expectedCash: Double
+)
+
+/** A Cashier may see only their own locally committed cash orders that still
+ * need capture. It deliberately exposes no staff/session/device identifiers. */
+data class NativePendingCashOrder(
+    val orderId: String,
+    val status: String,
+    val totalAmount: Double,
+    val paymentMethod: String
+)
+
+/** A non-secret task request reserved by the Hub before signing, with no
+ * receipt yet. It lets the current native staff session recover an interrupted
+ * UI response without guessing whether a business effect was committed. */
+data class NativeRecoverableCommand(
+    val commandId: String,
+    val type: String,
+    val payload: JSONObject
 )
 
 /** Every command path rejects secret-bearing objects before they can become a
