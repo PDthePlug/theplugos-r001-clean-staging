@@ -86,7 +86,7 @@ export interface DeviceRegistrationRequest {
  * active staff session, timestamp, sequence, and Keystore signature. */
 export interface NativeHubCommandRequest {
   commandId: string;
-  type: 'shift.open' | 'shift.close' | 'order.create' | 'order.status.transition' | 'payment.capture';
+  type: 'shift.open' | 'shift.close' | 'order.create' | 'order.status.transition' | 'payment.capture' | 'inventory.receive';
   payload: Record<string, unknown>;
 }
 
@@ -108,6 +108,15 @@ export interface NativeHubCatalogProduct {
   stockQuantity: number;
   unit: string;
   status: 'ACTIVE';
+}
+
+/** Minimum non-financial stock facts a Manager may use to request a counted
+ * inventory receipt. The Hub derives all movement and receipt authority. */
+export interface NativeHubInventoryProduct {
+  id: string;
+  name: string;
+  stockQuantity: number;
+  unit: string;
 }
 
 /** Measured native cash-drawer state. This is a projection of committed Hub
@@ -169,6 +178,7 @@ export interface NativeHubOperatorContext {
   role: 'CASHIER' | 'KITCHEN_STAFF' | 'MANAGER' | 'OWNER' | 'ADMINISTRATOR';
   vat: { enabled: boolean; rate: number };
   catalogProducts: NativeHubCatalogProduct[];
+  inventoryProducts: NativeHubInventoryProduct[];
   activeCashShift: NativeHubCashShift | null;
   pendingCashOrders: NativeHubPendingCashOrder[];
   readyForCollectionOrders: NativeHubReadyForCollectionOrder[];

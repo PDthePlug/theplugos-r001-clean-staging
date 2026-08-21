@@ -18,6 +18,7 @@ class HubCommandRouter(private val database: HubDatabase) {
             "order.create" -> createOrder(command, context)
             "order.status.transition" -> transitionOrder(command, context)
             "payment.capture" -> captureCashPayment(command, context)
+            "inventory.receive" -> receiveInventory(command, context)
             else -> throw HubCommandRejectedException("Command ${command.type} is not implemented by this Hub release.")
         }
     }
@@ -339,6 +340,79 @@ class HubCommandRouter(private val database: HubDatabase) {
         )
     }
 
+    /** A receipt records a Manager's counted inbound stock quantity, not a
+     * supplier invoice, purchase-order approval, price, cost, or cash fact.
+     * The Hub derives every before/after balance from its signed local catalog
+     * snapshot and commits all affected product projections with one receipt
+     * event, audit fact, and outbox entry. */
+    private fun receiveInventory(command: OperationalCommand, context: VerifiedCommandContext): RoutedCommand {
+        command.payload.requireExactFields(setOf("receiptId", "items"), "Inventory receipt")
+        val receiptId = command.payload.requiredUuid("receiptId", "Inventory receipt ID")
+        if (database.projection("inventory_receipts", receiptId) != null) {
+            throw HubCommandRejectedException("An inventory receipt with this receiptId already exists on this Hub.")
+        }
+        val items = command.payload.optJSONArray("items")
+            ?: throw HubCommandRejectedException("Inventory receipt requires line items.")
+        if (items.length() == 0 || items.length() > MAX_INVENTORY_RECEIPT_LINES) {
+            throw HubCommandRejectedException("Inventory receipt has an unsupported line-item count.")
+        }
+
+        val seenProductIds = mutableSetOf<String>()
+        val normalizedItems = org.json.JSONArray()
+        val stockProjections = mutableListOf<ProjectionWrite>()
+        for (index in 0 until items.length()) {
+            val item = items.optJSONObject(index)
+                ?: throw HubCommandRejectedException("Every inventory receipt line must be an object.")
+            item.requireExactFields(setOf("productId", "quantity"), "Every inventory receipt line")
+            val productId = requireUuid(item.optString("productId", "").trim(), "Every inventory receipt line needs a UUID productId.")
+            if (!seenProductIds.add(productId)) {
+                throw HubCommandRejectedException("An inventory receipt cannot contain the same product more than once.")
+            }
+            val quantity = item.optDouble("quantity", Double.NaN)
+            if (!quantity.isFinite() || quantity <= 0.0 || quantity > MAX_INVENTORY_RECEIPT_QUANTITY || !hasQuantityPrecision(quantity)) {
+                throw HubCommandRejectedException("Inventory receipt quantity must be a supported positive number with at most three decimal places.")
+            }
+            val catalogProduct = database.projection("catalog_products", productId)
+                ?: throw HubCommandRejectedException("Product $productId is not present in the Hub catalog snapshot.")
+            if (catalogProduct.optString("status", "").trim() != "ACTIVE") {
+                throw HubCommandRejectedException("Product $productId is not active for a new inventory receipt.")
+            }
+            val stockBefore = catalogProduct.optDouble("stock", Double.NaN)
+            if (!stockBefore.isFinite() || stockBefore < 0.0 || stockBefore > MAX_STOCK_QUANTITY || !hasQuantityPrecision(stockBefore)) {
+                throw HubCommandRejectedException("Product $productId has an invalid signed Hub stock balance.")
+            }
+            val stockAfter = roundQuantity(stockBefore + quantity)
+            if (!stockAfter.isFinite() || stockAfter > MAX_STOCK_QUANTITY) {
+                throw HubCommandRejectedException("Product $productId would exceed the supported Hub stock balance.")
+            }
+            normalizedItems.put(
+                JSONObject()
+                    .put("productId", productId)
+                    .put("quantity", quantity)
+                    .put("stockBefore", stockBefore)
+                    .put("stockAfter", stockAfter)
+            )
+            stockProjections += ProjectionWrite(
+                "catalog_products",
+                productId,
+                JSONObject(catalogProduct.toString()).put("stock", stockAfter)
+            )
+        }
+
+        val eventPayload = JSONObject()
+            .put("id", receiptId)
+            .put("receiptId", receiptId)
+            .put("status", "RECEIVED")
+            .put("items", normalizedItems)
+        val receiptProjection = JSONObject(eventPayload.toString())
+            .put("businessId", context.businessId)
+            .put("branchId", context.branchId)
+        return RoutedCommand(
+            events = listOf(HubEventDraft(receiptId, "inventory_receipt", "INVENTORY_RECEIVED", eventPayload)),
+            projections = listOf(ProjectionWrite("inventory_receipts", receiptId, receiptProjection)) + stockProjections
+        )
+    }
+
     private fun JSONObject.requiredOrderId(): String {
         val value = optString("orderId", optString("id", "")).trim()
         return requireUuid(value, "Order command requires orderId.")
@@ -347,6 +421,15 @@ class HubCommandRouter(private val database: HubDatabase) {
     private fun JSONObject.requiredUuid(field: String, subject: String): String {
         val value = optString(field, "").trim()
         return requireUuid(value, "$subject is required.")
+    }
+
+    private fun JSONObject.requireExactFields(expected: Set<String>, subject: String) {
+        val present = mutableSetOf<String>()
+        val iterator = keys()
+        while (iterator.hasNext()) present += iterator.next()
+        if (present != expected) {
+            throw HubCommandRejectedException("$subject contains unsupported or missing fields.")
+        }
     }
 
     private fun requireUuid(value: String, missingMessage: String): String {
@@ -572,7 +655,9 @@ class HubCommandRouter(private val database: HubDatabase) {
 
     private companion object {
         const val MAX_ORDER_LINE_ITEMS = 100
+        const val MAX_INVENTORY_RECEIPT_LINES = 100
         const val MAX_LINE_QUANTITY = 1_000_000.0
+        const val MAX_INVENTORY_RECEIPT_QUANTITY = 99_999_999_999.999
         const val MAX_ORDER_TOTAL = 999_999_999.99
         const val MAX_CASH_AMOUNT = 999_999_999.99
         const val MAX_STOCK_QUANTITY = 99_999_999_999.999

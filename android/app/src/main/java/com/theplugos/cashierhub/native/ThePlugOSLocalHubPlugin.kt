@@ -219,6 +219,16 @@ class ThePlugOSLocalHubPlugin : Plugin() {
                 })
             }
         })
+        put("inventoryProducts", JSArray().apply {
+            context.inventoryProducts.forEach { product ->
+                put(JSObject().apply {
+                    put("id", product.productId)
+                    put("name", product.name)
+                    put("stockQuantity", product.stockQuantity)
+                    put("unit", product.unit)
+                })
+            }
+        })
         put("activeCashShift", context.activeCashShift?.let { shift ->
             JSObject().apply {
                 put("id", shift.shiftId)

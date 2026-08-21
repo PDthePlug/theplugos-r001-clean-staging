@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, Cloud, CloudOff, Landmark, RefreshCw, ShieldCheck, WifiOff, XCircle } from 'lucide-react';
 import { localHubRuntime } from '@plugos/core';
 import type { NativeHubCancellableOrder, NativeHubCommandRequest, NativeHubOperatorContext, NetworkHealth } from '@plugos/core';
+import { ManagerInventoryReceiptPanel, type ManagerInventoryReceiptRequest } from './ManagerInventoryReceiptPanel';
 
 interface NativeManagerStationProps {
   onExit: () => void;
@@ -11,6 +12,7 @@ interface NativeManagerStationProps {
 type PendingOpenShiftRequest = NativeHubCommandRequest;
 type PendingCloseShiftRequest = NativeHubCommandRequest;
 type PendingCancellationRequest = NativeHubCommandRequest & { orderId: string };
+type PendingInventoryReceiptRequest = ManagerInventoryReceiptRequest;
 type ManagerCancellationTask = NativeHubCancellableOrder | { id: string; status: 'RECOVERY' };
 
 interface ManagerCancellationQueueProps {
@@ -45,6 +47,14 @@ function parseMoney(value: string, label: string): number {
   return Math.round((parsed + Number.EPSILON) * 100) / 100;
 }
 
+function parseReceiptQuantity(value: string, label: string): number {
+  const normalized = value.trim();
+  if (!/^\d+(?:\.\d{1,3})?$/.test(normalized)) throw new Error(`${label} must be a positive quantity with no more than three decimal places.`);
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed <= 0 || parsed > 99_999_999_999.999) throw new Error(`${label} is outside the supported local range.`);
+  return Math.round((parsed + Number.EPSILON) * 1_000) / 1_000;
+}
+
 function recoveredOpenShiftRequest(context: NativeHubOperatorContext): PendingOpenShiftRequest | null {
   return (context.recoverableNativeCommands || []).find((command) => command.type === 'shift.open') || null;
 }
@@ -63,6 +73,21 @@ function recoveredCancellationRequests(context: NativeHubOperatorContext): Recor
       throw new Error(`The native Hub has more than one unresolved cancellation request for order ${orderId.slice(0, 8)}. Reconcile the measured native state before issuing another cancellation.`);
     }
     requests[orderId] = { ...command, orderId };
+    return requests;
+  }, {});
+}
+
+function recoveredInventoryReceiptRequests(context: NativeHubOperatorContext): Record<string, PendingInventoryReceiptRequest> {
+  return (context.recoverableNativeCommands || []).reduce<Record<string, PendingInventoryReceiptRequest>>((requests, command) => {
+    const receiptId = command.payload.receiptId;
+    if (command.type !== 'inventory.receive') return requests;
+    if (typeof receiptId !== 'string' || !Array.isArray(command.payload.items)) {
+      throw new Error('The native Hub retained an invalid inventory-receipt retry request. Reconcile the measured native state before issuing another receipt.');
+    }
+    if (requests[receiptId] && requests[receiptId].commandId !== command.commandId) {
+      throw new Error(`The native Hub has more than one unresolved receipt request for ${receiptId.slice(0, 8)}. Reconcile the measured native state before issuing another receipt.`);
+    }
+    requests[receiptId] = { ...command, receiptId };
     return requests;
   }, {});
 }
@@ -116,9 +141,14 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
   const [pendingOpenRequest, setPendingOpenRequest] = useState<PendingOpenShiftRequest | null>(null);
   const [pendingCloseRequest, setPendingCloseRequest] = useState<PendingCloseShiftRequest | null>(null);
   const [pendingCancellationRequests, setPendingCancellationRequests] = useState<Record<string, PendingCancellationRequest>>({});
+  const [pendingInventoryReceiptRequests, setPendingInventoryReceiptRequests] = useState<Record<string, PendingInventoryReceiptRequest>>({});
+  const [selectedInventoryProductId, setSelectedInventoryProductId] = useState('');
+  const [inventoryReceiptQuantity, setInventoryReceiptQuantity] = useState('');
+  const [draftInventoryReceiptLines, setDraftInventoryReceiptLines] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
+  const [receivingReceiptId, setReceivingReceiptId] = useState<string | null>(null);
   const [endingNativeSession, setEndingNativeSession] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -136,6 +166,14 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
     setPendingOpenRequest(recoveredOpen);
     setPendingCloseRequest(recoveredClose);
     setPendingCancellationRequests(recoveredCancellationRequests(operator));
+    setPendingInventoryReceiptRequests(recoveredInventoryReceiptRequests(operator));
+    const inventoryProducts = operator.inventoryProducts || [];
+    setSelectedInventoryProductId((current) => inventoryProducts.some((product) => product.id === current)
+      ? current
+      : inventoryProducts[0]?.id || '');
+    setDraftInventoryReceiptLines((current) => Object.fromEntries(
+      Object.entries(current).filter(([productId]) => inventoryProducts.some((product) => product.id === productId)),
+    ));
     if (recoveredOpen && typeof recoveredOpen.payload.openingFloat === 'number') {
       setOpeningFloat(recoveredOpen.payload.openingFloat.toFixed(2));
     }
@@ -329,6 +367,90 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
     }
   };
 
+  const addInventoryReceiptLine = () => {
+    try {
+      const product = (context?.inventoryProducts || []).find((candidate) => candidate.id === selectedInventoryProductId);
+      if (!product) throw new Error('Choose an active signed product before adding a receipt line.');
+      const quantity = parseReceiptQuantity(inventoryReceiptQuantity, `The received quantity for ${product.name}`);
+      setDraftInventoryReceiptLines((current) => ({ ...current, [product.id]: quantity.toFixed(3) }));
+      setInventoryReceiptQuantity('');
+      setMessage(null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The inventory receipt line is invalid.');
+    }
+  };
+
+  const commitInventoryReceipt = async (request: PendingInventoryReceiptRequest) => {
+    setReceivingReceiptId(request.receiptId);
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      const receipt = await localHubRuntime.submitNativeCommandRequest(request);
+      setPendingInventoryReceiptRequests((current) => {
+        const next = { ...current };
+        delete next[request.receiptId];
+        return next;
+      });
+      setDraftInventoryReceiptLines({});
+      await refreshNativeState();
+      setMessage(
+        receipt.outcome === 'DUPLICATE'
+          ? `The exact inventory receipt request ${request.receiptId.slice(0, 8)} was already committed locally; no second stock movement was written.`
+          : `Inventory receipt ${request.receiptId.slice(0, 8)} was committed locally. ${receipt.outboxIds.length} event(s) remain queued until cloud acknowledgement if the link is unavailable.`,
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The native Hub could not record this inventory receipt. The same request can be retried safely.');
+    } finally {
+      setReceivingReceiptId(null);
+      setSubmitting(false);
+    }
+  };
+
+  const submitInventoryReceipt = async () => {
+    if (Object.keys(pendingInventoryReceiptRequests).length > 0) {
+      setMessage('Resolve the preserved native inventory receipt request before creating another. Retry it exactly, or use the native-confirmed abandonment path.');
+      return;
+    }
+    try {
+      const items = Object.entries(draftInventoryReceiptLines).map(([productId, quantity]) => ({
+        productId,
+        quantity: parseReceiptQuantity(quantity, 'A receipt line quantity'),
+      }));
+      if (items.length === 0) throw new Error('Add at least one counted inventory line before recording a receipt.');
+      const receiptId = createRequestUuid();
+      const request: PendingInventoryReceiptRequest = {
+        commandId: createRequestUuid(),
+        receiptId,
+        type: 'inventory.receive',
+        payload: { receiptId, items },
+      };
+      setPendingInventoryReceiptRequests((current) => ({ ...current, [request.receiptId]: request }));
+      await commitInventoryReceipt(request);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The inventory receipt is invalid.');
+    }
+  };
+
+  const abandonPendingInventoryReceipt = async (receiptId: string) => {
+    const request = pendingInventoryReceiptRequests[receiptId];
+    if (!request) return;
+    setReceivingReceiptId(receiptId);
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      const discarded = await localHubRuntime.discardNativeCommandRequest(request.commandId);
+      await refreshNativeState();
+      setMessage(discarded
+        ? `The native Hub confirmed that inventory receipt ${receiptId.slice(0, 8)} had no receipt and abandoned only its retry reservation. No inventory receipt, stock movement, event, audit fact, or outbox record was removed.`
+        : 'That inventory receipt request no longer has an uncommitted native reservation. The measured Hub state was refreshed.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The native Hub could not safely abandon this inventory receipt request.');
+    } finally {
+      setReceivingReceiptId(null);
+      setSubmitting(false);
+    }
+  };
+
   const endNativeSession = async () => {
     setEndingNativeSession(true);
     setMessage(null);
@@ -344,6 +466,7 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
   const cloudState = health?.cloudStatus || 'UNKNOWN';
   const cloudIcon = cloudState === 'CONNECTED' ? <Cloud className="h-4 w-4" aria-hidden="true" /> : <CloudOff className="h-4 w-4" aria-hidden="true" />;
   const activeShift = context?.activeCashShift || null;
+  const inventoryProducts = context?.inventoryProducts || [];
   const cancellableOrders = context?.cancellableOrders || [];
   const cancellableOrderIds = new Set(cancellableOrders.map((order) => order.id));
   const cancellationTasks: ManagerCancellationTask[] = [
@@ -383,7 +506,7 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
           <div className="flex items-center gap-3">
             <button type="button" onClick={onExit} className="rounded-xl border border-slate-700 bg-slate-950 p-2.5 text-slate-200 hover:bg-slate-800" aria-label="Return to native station access"><ArrowLeft className="h-5 w-5" /></button>
             <span className="rounded-xl border border-emerald-500/30 bg-emerald-500/10 p-2.5 text-emerald-300"><ShieldCheck className="h-6 w-6" aria-hidden="true" /></span>
-            <div><p className="text-xs uppercase tracking-[0.16em] text-slate-500">Native Manager Hub</p><h1 className="text-xl font-black">Cash custody · {context.staffName}</h1><p className="mt-0.5 text-xs text-slate-400">Measured local authority · no browser-held drawer state</p></div>
+            <div><p className="text-xs uppercase tracking-[0.16em] text-slate-500">Native Manager Hub</p><h1 className="text-xl font-black">Cash custody &amp; stock · {context.staffName}</h1><p className="mt-0.5 text-xs text-slate-400">Measured local authority · no browser-held drawer or inventory state</p></div>
           </div>
           <div className={`inline-flex items-center gap-2 rounded-xl border px-3 py-2 text-xs ${cloudState === 'CONNECTED' ? 'border-emerald-500/30 bg-emerald-500/10 text-emerald-100' : 'border-amber-500/30 bg-amber-500/10 text-amber-100'}`}>
             {cloudIcon}<span><strong className="block">Cloud {cloudState.toLowerCase()}</strong><small className="block">{health?.outboxDepth || 0} locally committed event(s) awaiting acknowledgement</small></span>
@@ -391,6 +514,30 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
         </header>
 
         {message && <p className="rounded-2xl border border-slate-800 bg-slate-900 p-4 text-sm leading-relaxed text-slate-300" role="status">{message}</p>}
+
+        <ManagerInventoryReceiptPanel
+          products={inventoryProducts}
+          selectedProductId={selectedInventoryProductId}
+          quantity={inventoryReceiptQuantity}
+          draftLines={draftInventoryReceiptLines}
+          pendingRequests={pendingInventoryReceiptRequests}
+          receivingReceiptId={receivingReceiptId}
+          submitting={submitting}
+          onSelectedProductChange={setSelectedInventoryProductId}
+          onQuantityChange={setInventoryReceiptQuantity}
+          onAddLine={addInventoryReceiptLine}
+          onRemoveLine={(productId) => setDraftInventoryReceiptLines((current) => {
+            const next = { ...current };
+            delete next[productId];
+            return next;
+          })}
+          onSubmit={() => { void submitInventoryReceipt(); }}
+          onRetry={(receiptId) => {
+            const request = pendingInventoryReceiptRequests[receiptId];
+            if (request) void commitInventoryReceipt(request);
+          }}
+          onAbandon={(receiptId) => { void abandonPendingInventoryReceipt(receiptId); }}
+        />
 
         {activeShift ? (
           <section className="space-y-4 rounded-3xl border border-emerald-500/30 bg-slate-900 p-6">

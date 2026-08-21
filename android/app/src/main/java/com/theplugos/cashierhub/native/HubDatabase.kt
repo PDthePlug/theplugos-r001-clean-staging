@@ -480,6 +480,22 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
             null
         }
         val visibleCatalogProducts = if (session.role == "CASHIER") products else emptyList()
+        val inventoryProducts = if (session.role == "MANAGER") {
+            products
+                .asSequence()
+                .filter { it.status == "ACTIVE" }
+                .map { product ->
+                    NativeInventoryProduct(
+                        productId = product.productId,
+                        name = product.name,
+                        stockQuantity = product.stockQuantity,
+                        unit = product.unit
+                    )
+                }
+                .toList()
+        } else {
+            emptyList()
+        }
         val visibleVat = if (session.role == "CASHIER") vat else Pair(false, 0.0)
         val pendingCashOrders = if (session.role == "CASHIER") {
             readPendingCashOrdersForStaff(db, session.staffId, businessId, branchId)
@@ -508,6 +524,7 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
             vatEnabled = visibleVat.first,
             vatRate = visibleVat.second,
             catalogProducts = visibleCatalogProducts,
+            inventoryProducts = inventoryProducts,
             activeCashShift = activeCashShift,
             pendingCashOrders = pendingCashOrders,
             readyForCollectionOrders = readyForCollectionOrders,
@@ -816,7 +833,7 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
             LEFT JOIN command_receipts receipt ON receipt.command_id = intent.command_id
             WHERE intent.staff_session_id = ?
               AND receipt.command_id IS NULL
-              AND intent.command_type IN ('shift.open', 'shift.close', 'order.create', 'order.status.transition', 'payment.capture')
+              AND intent.command_type IN ('shift.open', 'shift.close', 'order.create', 'order.status.transition', 'payment.capture', 'inventory.receive')
             ORDER BY intent.created_at ASC, intent.sequence ASC
             LIMIT ?
             """.trimIndent(),
@@ -1685,6 +1702,6 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
         val PENDING_CASH_ORDER_STATUSES = setOf("PLACED", "PREPARING", "READY")
         val CANCELLABLE_MANAGER_ORDER_STATUSES = setOf("PLACED", "PREPARING")
         val PENDING_KITCHEN_ORDER_STATUSES = setOf("PLACED", "PREPARING")
-        val RECOVERABLE_NATIVE_COMMAND_TYPES = setOf("shift.open", "shift.close", "order.create", "order.status.transition", "payment.capture")
+        val RECOVERABLE_NATIVE_COMMAND_TYPES = setOf("shift.open", "shift.close", "order.create", "order.status.transition", "payment.capture", "inventory.receive")
     }
 }

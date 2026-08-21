@@ -5,8 +5,8 @@
   migrations, and environment-specific evidence records
 - **Last reconciled source:** the R003 native Cashier Hub authority foundation
   plus source-only order-transition, cash-capture, cash-collection,
-  pending-order-cancellation, cash-shift-close, native Kitchen, and native
-  station-entry additions
+  pending-order-cancellation, cash-shift-close, inventory-receipt, native
+  Kitchen, and native station-entry additions
 - **Production mutation authority:** explicitly withheld
 
 ## What is true today
@@ -36,6 +36,11 @@ physical count and Hub-derived variance after pending orders are resolved. It
 does not demonstrate cash-up approval, bank deposit, printing, physical
 custody transfer, or cloud acknowledgement.
 
+The source-only Manager inventory-receipt workflow can record a physical
+counted quantity for active signed branch products. It does not demonstrate a
+supplier, purchase order, invoice, cost, payment, allocation, stock adjustment,
+or cloud acknowledgement.
+
 The source-only native pending-order-cancellation workflow exposes only the
 already-authorized `PENDING` cancellation transitions for Cashier/Manager
 roles. It does not demonstrate a refund, cash reversal, return, or cloud
@@ -56,7 +61,7 @@ cloud acknowledgement is valid until the gates below have recorded evidence.
 |---|---|---|
 | Production `iwbbwcaylpulcpvbfkdx` | R001 foundation; read-only inspection only | Preserve data; do not apply R002/R003 or deploy receivers |
 | Legacy staging `dpqtgfxovmiwzkiuzoya` | Paused contaminated rehearsal evidence | Preserve for comparison; do not resume, reset, overwrite, or treat as a release target without a separate review |
-| Clean staging `nuufscrmkfoukndfmwcc` | Empty Free-plan replacement | Use only for the verified R001 clone runbook; do not apply R002/R003 or deploy receivers until the clone gate passes |
+| Clean staging `nuufscrmkfoukndfmwcc` | Not available for this delivery constraint | Do not use, deploy to, or mutate while delivery proceeds local-first without staging |
 
 ## Required gates before a production release
 

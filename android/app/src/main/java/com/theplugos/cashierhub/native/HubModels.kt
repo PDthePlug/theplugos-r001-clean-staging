@@ -192,6 +192,7 @@ data class NativeOperatorContext(
     val vatEnabled: Boolean,
     val vatRate: Double,
     val catalogProducts: List<NativeCatalogProduct>,
+    val inventoryProducts: List<NativeInventoryProduct>,
     val activeCashShift: NativeCashShift?,
     val pendingCashOrders: List<NativePendingCashOrder>,
     val readyForCollectionOrders: List<NativeReadyForCollectionOrder>,
@@ -208,6 +209,16 @@ data class NativeCatalogProduct(
     val stockQuantity: Double,
     val unit: String,
     val status: String
+)
+
+/** A Manager inventory-receipt task exposes the minimum signed stock facts
+ * needed to record a counted delivery. It intentionally omits price, tax,
+ * cost, supplier, purchase-order, and financial data. */
+data class NativeInventoryProduct(
+    val productId: String,
+    val name: String,
+    val stockQuantity: Double,
+    val unit: String
 )
 
 /** Non-secret, measured cash-drawer facts. These values are projections of

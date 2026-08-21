@@ -22,7 +22,7 @@ JavaScript may call the native plugin with only:
 ```ts
 type NativeCommandRequest = {
   commandId: string; // UUID; stable across an exact retry
-  type: 'shift.open' | 'order.create' | 'order.status.transition' | 'payment.capture';
+  type: 'shift.open' | 'shift.close' | 'order.create' | 'order.status.transition' | 'payment.capture' | 'inventory.receive';
   payload: Record<string, unknown>; // bounded, non-secret domain input
 };
 ```
@@ -92,6 +92,12 @@ workflow. The Kitchen surface may retry only the original `orderId` and target
 status, and it must block a replacement transition request for that order until
 native code returns a receipt or confirms abandonment.
 
+`inventory.receive` is Manager-only and accepts only a receipt UUID plus
+product quantities. The Hub derives the active catalog balance before/after
+facts and never returns supplier, cost, purchase-order, or financial data to
+the React layer. Its receipt-specific rules are in
+`LOCAL_FIRST_INVENTORY_RECEIPT_CONTRACT.md`.
+
 ## Bundle and restart rules
 
 Installing a renewed bundle replaces server authority facts atomically, but it
@@ -105,8 +111,8 @@ verification checks.
 
 - This does not authorize browser-originated device enrollment or PIN entry.
 - This does not make a browser tab a LAN terminal.
-- This does not add card/QR provider capture, inventory, shift close, cash-up,
-  refund, or remote-device pairing handlers before their atomic domain
-  contracts exist.
+- This does not add card/QR provider capture, supplier or purchase-order
+  inventory workflows, stock adjustment/waste/void, cash-up, refund, or
+  remote-device pairing handlers before their atomic domain contracts exist.
 - This is source implementation only until the required staging database and
   physical-device acceptance gates are complete.
