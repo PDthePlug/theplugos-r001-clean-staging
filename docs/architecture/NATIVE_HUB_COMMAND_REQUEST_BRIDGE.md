@@ -22,7 +22,7 @@ JavaScript may call the native plugin with only:
 ```ts
 type NativeCommandRequest = {
   commandId: string; // UUID; stable across an exact retry
-  type: 'shift.open' | 'shift.close' | 'order.create' | 'order.status.transition' | 'payment.capture' | 'inventory.receive' | 'inventory.adjust';
+  type: 'shift.open' | 'shift.close' | 'order.create' | 'order.status.transition' | 'payment.capture' | 'inventory.receive' | 'inventory.adjust' | 'inventory.waste';
   payload: Record<string, unknown>; // bounded, non-secret domain input
 };
 ```
@@ -104,6 +104,12 @@ balance. The Hub derives the prior balance and signed difference. It is not a
 waste, supplier, or financial workflow; its precise rules are in
 `LOCAL_FIRST_INVENTORY_COUNT_CORRECTION_CONTRACT.md`.
 
+`inventory.waste` is Manager-only and accepts only a waste UUID, one supported
+physical reason (`SPOILAGE`, `DAMAGE`, or `EXPIRED`), and positive product
+quantities. The Hub derives the balances and rejects insufficient stock. It is
+not a supplier, return, cost, tax, cash, approval, or financial-loss workflow;
+its precise rules are in `LOCAL_FIRST_INVENTORY_WASTE_CONTRACT.md`.
+
 ## Bundle and restart rules
 
 Installing a renewed bundle replaces server authority facts atomically, but it
@@ -118,7 +124,7 @@ verification checks.
 - This does not authorize browser-originated device enrollment or PIN entry.
 - This does not make a browser tab a LAN terminal.
 - This does not add card/QR provider capture, supplier or purchase-order
-  inventory workflows, stock waste/void, cash-up, refund, or
+  inventory workflows, stock void, cash-up, refund, or
   remote-device pairing handlers before their atomic domain contracts exist.
 - This is source implementation only until the required staging database and
   physical-device acceptance gates are complete.

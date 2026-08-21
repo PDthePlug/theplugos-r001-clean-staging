@@ -4,6 +4,7 @@ import { localHubRuntime } from '@plugos/core';
 import type { NativeHubCancellableOrder, NativeHubCommandRequest, NativeHubOperatorContext, NetworkHealth } from '@plugos/core';
 import { ManagerInventoryAdjustmentPanel, type ManagerInventoryAdjustmentRequest } from './ManagerInventoryAdjustmentPanel';
 import { ManagerInventoryReceiptPanel, type ManagerInventoryReceiptRequest } from './ManagerInventoryReceiptPanel';
+import { INVENTORY_WASTE_REASONS, ManagerInventoryWastePanel, type ManagerInventoryWasteReason, type ManagerInventoryWasteRequest } from './ManagerInventoryWastePanel';
 
 interface NativeManagerStationProps {
   onExit: () => void;
@@ -15,6 +16,7 @@ type PendingCloseShiftRequest = NativeHubCommandRequest;
 type PendingCancellationRequest = NativeHubCommandRequest & { orderId: string };
 type PendingInventoryReceiptRequest = ManagerInventoryReceiptRequest;
 type PendingInventoryAdjustmentRequest = ManagerInventoryAdjustmentRequest;
+type PendingInventoryWasteRequest = ManagerInventoryWasteRequest;
 type ManagerCancellationTask = NativeHubCancellableOrder | { id: string; status: 'RECOVERY' };
 
 interface ManagerCancellationQueueProps {
@@ -117,6 +119,25 @@ function recoveredInventoryAdjustmentRequests(context: NativeHubOperatorContext)
   }, {});
 }
 
+function isInventoryWasteReason(value: unknown): value is ManagerInventoryWasteReason {
+  return typeof value === 'string' && INVENTORY_WASTE_REASONS.includes(value as ManagerInventoryWasteReason);
+}
+
+function recoveredInventoryWasteRequests(context: NativeHubOperatorContext): Record<string, PendingInventoryWasteRequest> {
+  return (context.recoverableNativeCommands || []).reduce<Record<string, PendingInventoryWasteRequest>>((requests, command) => {
+    const wasteId = command.payload.wasteId;
+    if (command.type !== 'inventory.waste') return requests;
+    if (typeof wasteId !== 'string' || !isInventoryWasteReason(command.payload.reason) || !Array.isArray(command.payload.items)) {
+      throw new Error('The native Hub retained an invalid inventory-waste retry request. Reconcile the measured native state before issuing another waste record.');
+    }
+    if (requests[wasteId] && requests[wasteId].commandId !== command.commandId) {
+      throw new Error(`The native Hub has more than one unresolved waste request for ${wasteId.slice(0, 8)}. Reconcile the measured native state before issuing another waste record.`);
+    }
+    requests[wasteId] = { ...command, wasteId };
+    return requests;
+  }, {});
+}
+
 function requestShiftId(request: NativeHubCommandRequest): string {
   return typeof request.payload.shiftId === 'string' ? request.payload.shiftId : 'unknown';
 }
@@ -168,17 +189,23 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
   const [pendingCancellationRequests, setPendingCancellationRequests] = useState<Record<string, PendingCancellationRequest>>({});
   const [pendingInventoryReceiptRequests, setPendingInventoryReceiptRequests] = useState<Record<string, PendingInventoryReceiptRequest>>({});
   const [pendingInventoryAdjustmentRequests, setPendingInventoryAdjustmentRequests] = useState<Record<string, PendingInventoryAdjustmentRequest>>({});
+  const [pendingInventoryWasteRequests, setPendingInventoryWasteRequests] = useState<Record<string, PendingInventoryWasteRequest>>({});
   const [selectedInventoryProductId, setSelectedInventoryProductId] = useState('');
   const [inventoryReceiptQuantity, setInventoryReceiptQuantity] = useState('');
   const [draftInventoryReceiptLines, setDraftInventoryReceiptLines] = useState<Record<string, string>>({});
   const [selectedInventoryAdjustmentProductId, setSelectedInventoryAdjustmentProductId] = useState('');
   const [inventoryAdjustmentStockAfter, setInventoryAdjustmentStockAfter] = useState('');
   const [draftInventoryAdjustmentLines, setDraftInventoryAdjustmentLines] = useState<Record<string, string>>({});
+  const [selectedInventoryWasteProductId, setSelectedInventoryWasteProductId] = useState('');
+  const [inventoryWasteQuantity, setInventoryWasteQuantity] = useState('');
+  const [inventoryWasteReason, setInventoryWasteReason] = useState<ManagerInventoryWasteReason>('SPOILAGE');
+  const [draftInventoryWasteLines, setDraftInventoryWasteLines] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [receivingReceiptId, setReceivingReceiptId] = useState<string | null>(null);
   const [adjustingInventoryId, setAdjustingInventoryId] = useState<string | null>(null);
+  const [wastingInventoryId, setWastingInventoryId] = useState<string | null>(null);
   const [endingNativeSession, setEndingNativeSession] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -198,6 +225,7 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
     setPendingCancellationRequests(recoveredCancellationRequests(operator));
     setPendingInventoryReceiptRequests(recoveredInventoryReceiptRequests(operator));
     setPendingInventoryAdjustmentRequests(recoveredInventoryAdjustmentRequests(operator));
+    setPendingInventoryWasteRequests(recoveredInventoryWasteRequests(operator));
     const inventoryProducts = operator.inventoryProducts || [];
     setSelectedInventoryProductId((current) => inventoryProducts.some((product) => product.id === current)
       ? current
@@ -209,6 +237,12 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
       ? current
       : inventoryProducts[0]?.id || '');
     setDraftInventoryAdjustmentLines((current) => Object.fromEntries(
+      Object.entries(current).filter(([productId]) => inventoryProducts.some((product) => product.id === productId)),
+    ));
+    setSelectedInventoryWasteProductId((current) => inventoryProducts.some((product) => product.id === current)
+      ? current
+      : inventoryProducts[0]?.id || '');
+    setDraftInventoryWasteLines((current) => Object.fromEntries(
       Object.entries(current).filter(([productId]) => inventoryProducts.some((product) => product.id === productId)),
     ));
     if (recoveredOpen && typeof recoveredOpen.payload.openingFloat === 'number') {
@@ -575,6 +609,93 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
     }
   };
 
+  const addInventoryWasteLine = () => {
+    try {
+      const product = (context?.inventoryProducts || []).find((candidate) => candidate.id === selectedInventoryWasteProductId);
+      if (!product) throw new Error('Choose an active signed product before adding a waste line.');
+      const quantity = parseReceiptQuantity(inventoryWasteQuantity, `The waste quantity for ${product.name}`);
+      if (quantity > product.stockQuantity) {
+        throw new Error(`The waste quantity for ${product.name} exceeds its current signed balance. Refresh the Hub state before retrying.`);
+      }
+      setDraftInventoryWasteLines((current) => ({ ...current, [product.id]: quantity.toFixed(3) }));
+      setInventoryWasteQuantity('');
+      setMessage(null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The inventory waste line is invalid.');
+    }
+  };
+
+  const commitInventoryWaste = async (request: PendingInventoryWasteRequest) => {
+    setWastingInventoryId(request.wasteId);
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      const receipt = await localHubRuntime.submitNativeCommandRequest(request);
+      setPendingInventoryWasteRequests((current) => {
+        const next = { ...current };
+        delete next[request.wasteId];
+        return next;
+      });
+      setDraftInventoryWasteLines({});
+      await refreshNativeState();
+      setMessage(
+        receipt.outcome === 'DUPLICATE'
+          ? `The exact inventory waste request ${request.wasteId.slice(0, 8)} was already committed locally; no second stock movement was written.`
+          : `Inventory waste ${request.wasteId.slice(0, 8)} was committed locally. ${receipt.outboxIds.length} event(s) remain queued until cloud acknowledgement if the link is unavailable.`,
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The native Hub could not record this inventory waste. The same request can be retried safely.');
+    } finally {
+      setWastingInventoryId(null);
+      setSubmitting(false);
+    }
+  };
+
+  const submitInventoryWaste = async () => {
+    if (Object.keys(pendingInventoryWasteRequests).length > 0) {
+      setMessage('Resolve the preserved native inventory-waste request before creating another. Retry it exactly, or use the native-confirmed abandonment path.');
+      return;
+    }
+    try {
+      const items = Object.entries(draftInventoryWasteLines).map(([productId, quantity]) => ({
+        productId,
+        quantity: parseReceiptQuantity(quantity, 'An inventory waste quantity'),
+      }));
+      if (items.length === 0) throw new Error('Add at least one unusable stock line before recording waste.');
+      const wasteId = createRequestUuid();
+      const request: PendingInventoryWasteRequest = {
+        commandId: createRequestUuid(),
+        wasteId,
+        type: 'inventory.waste',
+        payload: { wasteId, reason: inventoryWasteReason, items },
+      };
+      setPendingInventoryWasteRequests((current) => ({ ...current, [request.wasteId]: request }));
+      await commitInventoryWaste(request);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The inventory waste record is invalid.');
+    }
+  };
+
+  const abandonPendingInventoryWaste = async (wasteId: string) => {
+    const request = pendingInventoryWasteRequests[wasteId];
+    if (!request) return;
+    setWastingInventoryId(wasteId);
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      const discarded = await localHubRuntime.discardNativeCommandRequest(request.commandId);
+      await refreshNativeState();
+      setMessage(discarded
+        ? `The native Hub confirmed that inventory waste ${wasteId.slice(0, 8)} had no receipt and abandoned only its retry reservation. No waste record, stock movement, event, audit fact, or outbox record was removed.`
+        : 'That inventory-waste request no longer has an uncommitted native reservation. The measured Hub state was refreshed.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The native Hub could not safely abandon this inventory-waste request.');
+    } finally {
+      setWastingInventoryId(null);
+      setSubmitting(false);
+    }
+  };
+
   const endNativeSession = async () => {
     setEndingNativeSession(true);
     setMessage(null);
@@ -685,6 +806,32 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
             if (request) void commitInventoryAdjustment(request);
           }}
           onAbandon={(adjustmentId) => { void abandonPendingInventoryAdjustment(adjustmentId); }}
+        />
+
+        <ManagerInventoryWastePanel
+          products={inventoryProducts}
+          selectedProductId={selectedInventoryWasteProductId}
+          quantity={inventoryWasteQuantity}
+          reason={inventoryWasteReason}
+          draftLines={draftInventoryWasteLines}
+          pendingRequests={pendingInventoryWasteRequests}
+          wastingWasteId={wastingInventoryId}
+          submitting={submitting}
+          onSelectedProductChange={setSelectedInventoryWasteProductId}
+          onQuantityChange={setInventoryWasteQuantity}
+          onReasonChange={setInventoryWasteReason}
+          onAddLine={addInventoryWasteLine}
+          onRemoveLine={(productId) => setDraftInventoryWasteLines((current) => {
+            const next = { ...current };
+            delete next[productId];
+            return next;
+          })}
+          onSubmit={() => { void submitInventoryWaste(); }}
+          onRetry={(wasteId) => {
+            const request = pendingInventoryWasteRequests[wasteId];
+            if (request) void commitInventoryWaste(request);
+          }}
+          onAbandon={(wasteId) => { void abandonPendingInventoryWaste(wasteId); }}
         />
 
         {activeShift ? (

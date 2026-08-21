@@ -92,7 +92,7 @@ class HubCommandVerifier(
             // checked again by the domain router.
             "CASHIER" -> setOf("order.create", "order.status.transition", "payment.capture")
             "KITCHEN_STAFF" -> setOf("order.status.transition")
-            "MANAGER" -> setOf("order.status.transition", "shift.open", "shift.close", "inventory.receive", "inventory.adjust")
+            "MANAGER" -> setOf("order.status.transition", "shift.open", "shift.close", "inventory.receive", "inventory.adjust", "inventory.waste")
             "OWNER", "ADMINISTRATOR" -> emptySet()
             else -> emptySet()
         }

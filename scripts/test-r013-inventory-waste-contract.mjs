@@ -8,7 +8,7 @@ import { pgcrypto } from '@electric-sql/pglite/contrib/pgcrypto';
 const root = resolve(dirname(fileURLToPath(import.meta.url)), '..');
 const load = (relativePath) => readFile(resolve(root, relativePath), 'utf8');
 
-const [r001, r002, r003, r004, r005, r006, r007, r008, contract, router, verifier, runtime, database, bridge, managerUi, managerPanel, syncEndpoint, releaseStatus] = await Promise.all([
+const [r001, r002, r003, r004, r005, r006, r007, r008, r009, contract, router, verifier, runtime, database, bridge, managerUi, managerPanel, syncEndpoint, releaseStatus] = await Promise.all([
   load('supabase/migrations/001_mvp_core.sql'),
   load('supabase/migrations/002_secure_identity_devices.sql'),
   load('supabase/migrations/003_local_hub_authority.sql'),
@@ -17,14 +17,15 @@ const [r001, r002, r003, r004, r005, r006, r007, r008, contract, router, verifie
   load('supabase/migrations/006_cash_shift_close.sql'),
   load('supabase/migrations/007_inventory_receipt.sql'),
   load('supabase/migrations/008_inventory_count_correction.sql'),
-  load('docs/architecture/LOCAL_FIRST_INVENTORY_COUNT_CORRECTION_CONTRACT.md'),
+  load('supabase/migrations/009_inventory_waste.sql'),
+  load('docs/architecture/LOCAL_FIRST_INVENTORY_WASTE_CONTRACT.md'),
   load('android/app/src/main/java/com/theplugos/cashierhub/native/HubCommandRouter.kt'),
   load('android/app/src/main/java/com/theplugos/cashierhub/native/HubCommandVerifier.kt'),
   load('android/app/src/main/java/com/theplugos/cashierhub/native/CashierHubRuntime.kt'),
   load('android/app/src/main/java/com/theplugos/cashierhub/native/HubDatabase.kt'),
   load('packages/core/src/runtime/native-hub-bridge.ts'),
   load('src/workspaces/NativeManagerStation.tsx'),
-  load('src/workspaces/ManagerInventoryAdjustmentPanel.tsx'),
+  load('src/workspaces/ManagerInventoryWastePanel.tsx'),
   load('supabase/functions/hub-sync/index.ts'),
   load('docs/operations/RELEASE_STATUS.md'),
 ]);
@@ -33,49 +34,49 @@ function requireText(subject, fragment, message = `Expected source to contain: $
   assert.ok(subject.includes(fragment), message);
 }
 
-requireText(contract, "type: 'inventory.adjust'");
-requireText(contract, 'COUNT_CORRECTION');
+requireText(contract, "type: 'inventory.waste'");
+requireText(contract, "'SPOILAGE' | 'DAMAGE' | 'EXPIRED'");
 requireText(contract, 'No staging, deployment, Supabase mutation');
-requireText(router, '"inventory.adjust" -> adjustInventory(command, context)');
-requireText(router, 'private fun adjustInventory(');
-requireText(router, '"INVENTORY_ADJUSTED"');
-requireText(router, 'MAX_INVENTORY_ADJUSTMENT_LINES = 100');
-requireText(router, 'command.payload.requireExactFields(setOf("adjustmentId", "reason", "items"), "Inventory count correction")');
-requireText(verifier, '"inventory.receive", "inventory.adjust"');
-requireText(runtime, '"inventory.receive", "inventory.adjust"');
-requireText(database, '"inventory.receive", "inventory.adjust"');
-requireText(bridge, "| 'inventory.adjust'");
-requireText(managerUi, 'ManagerInventoryAdjustmentPanel');
-requireText(managerPanel, 'Record count correction locally');
+requireText(router, '"inventory.waste" -> wasteInventory(command, context)');
+requireText(router, 'private fun wasteInventory(');
+requireText(router, '"INVENTORY_WASTED"');
+requireText(router, 'MAX_INVENTORY_WASTE_LINES = 100');
+requireText(router, 'command.payload.requireExactFields(setOf("wasteId", "reason", "items"), "Inventory waste")');
+requireText(verifier, '"inventory.adjust", "inventory.waste"');
+requireText(runtime, '"inventory.adjust", "inventory.waste"');
+requireText(database, '"inventory.adjust", "inventory.waste"');
+requireText(bridge, "| 'inventory.waste';");
+requireText(managerUi, 'ManagerInventoryWastePanel');
+requireText(managerPanel, 'Record waste locally');
 requireText(managerPanel, 'Waste, supplier, purchase-order, cost, cash, approval, and cloud acknowledgement are unavailable.');
-assert.ok(!managerUi.includes('supabase'), 'Manager correction UI must not mutate Supabase directly.');
-assert.ok(!managerPanel.includes('product.price'), 'Manager correction panel must not render price facts.');
-assert.ok(!managerPanel.includes('supplierName'), 'Manager correction panel must not render supplier facts.');
-requireText(syncEndpoint, "'r008_ingest_hub_inventory_adjustment_events'");
-requireText(syncEndpoint, "if (action === 'INVENTORY_ADJUSTED') return 'r008_ingest_hub_inventory_adjustment_events';");
-requireText(r008, 'R008_REQUIRES_ACCEPTED_R007');
-requireText(r008, "'INVENTORY_ADJUSTED'");
-requireText(r008, 'CREATE TABLE public.inventory_adjustments');
-requireText(r008, 'CREATE TABLE public.inventory_adjustment_lines');
-requireText(r008, 'R008_INVENTORY_ADJUSTMENT_ROLE_OR_SCOPE_FORBIDDEN');
-requireText(r008, 'R008_INVENTORY_ADJUSTMENT_STOCK_BALANCE_MISMATCH');
-requireText(r008, 'CREATE OR REPLACE FUNCTION public.r008_ingest_hub_inventory_adjustment_events');
-requireText(releaseStatus, 'inventory-count-correction workflow');
+assert.ok(!managerUi.includes('supabase'), 'Manager waste UI must not mutate Supabase directly.');
+assert.ok(!managerPanel.includes('product.price'), 'Manager waste panel must not render price facts.');
+assert.ok(!managerPanel.includes('supplierName'), 'Manager waste panel must not render supplier facts.');
+requireText(syncEndpoint, "'r009_ingest_hub_inventory_waste_events'");
+requireText(syncEndpoint, "if (action === 'INVENTORY_WASTED') return 'r009_ingest_hub_inventory_waste_events';");
+requireText(r009, 'R009_REQUIRES_ACCEPTED_R008');
+requireText(r009, "'INVENTORY_WASTED'");
+requireText(r009, 'CREATE TABLE public.inventory_waste');
+requireText(r009, 'CREATE TABLE public.inventory_waste_lines');
+requireText(r009, 'R009_INVENTORY_WASTE_ROLE_OR_SCOPE_FORBIDDEN');
+requireText(r009, 'R009_INVENTORY_WASTE_STOCK_BALANCE_MISMATCH');
+requireText(r009, 'CREATE OR REPLACE FUNCTION public.r009_ingest_hub_inventory_waste_events');
+requireText(releaseStatus, 'inventory-waste workflow');
 
 const fixture = Object.freeze({
-  owner: '00000000-0000-4000-8000-000000000121',
-  business: '10000000-0000-4000-8000-000000000121',
-  branch: '11000000-0000-4000-8000-000000000121',
-  device: '12000000-0000-4000-8000-000000000121',
-  cashier: '20000000-0000-4000-8000-000000000121',
-  manager: '20000000-0000-4000-8000-000000000122',
-  cashierSession: '30000000-0000-4000-8000-000000000121',
-  managerSession: '30000000-0000-4000-8000-000000000122',
-  bundle: '31000000-0000-4000-8000-000000000121',
-  product: '40000000-0000-4000-8000-000000000121',
-  adjustment: '41000000-0000-4000-8000-000000000121',
-  staleAdjustment: '41000000-0000-4000-8000-000000000122',
-  duplicateLineAdjustment: '41000000-0000-4000-8000-000000000123',
+  owner: '00000000-0000-4000-8000-000000000131',
+  business: '10000000-0000-4000-8000-000000000131',
+  branch: '11000000-0000-4000-8000-000000000131',
+  device: '12000000-0000-4000-8000-000000000131',
+  cashier: '20000000-0000-4000-8000-000000000131',
+  manager: '20000000-0000-4000-8000-000000000132',
+  cashierSession: '30000000-0000-4000-8000-000000000131',
+  managerSession: '30000000-0000-4000-8000-000000000132',
+  bundle: '31000000-0000-4000-8000-000000000131',
+  product: '40000000-0000-4000-8000-000000000131',
+  waste: '41000000-0000-4000-8000-000000000131',
+  staleWaste: '41000000-0000-4000-8000-000000000132',
+  duplicateLineWaste: '41000000-0000-4000-8000-000000000133',
 });
 
 const quote = (value) => `'${String(value).replaceAll("'", "''")}'`;
@@ -104,6 +105,7 @@ try {
   await db.exec(r006);
   await db.exec(r007);
   await db.exec(r008);
+  await db.exec(r009);
   await db.exec(`
     ALTER TABLE public.hub_authorization_bundles
       DROP CONSTRAINT IF EXISTS hub_authorization_bundles_issuer_key_id_check;
@@ -115,27 +117,27 @@ try {
 
   const schema = await db.query(`
     SELECT
-      to_regprocedure('public.r008_ingest_hub_inventory_adjustment_events(text,uuid,jsonb)')::text AS ingest,
+      to_regprocedure('public.r009_ingest_hub_inventory_waste_events(text,uuid,jsonb)')::text AS ingest,
       (SELECT count(*)::integer FROM information_schema.columns
-        WHERE table_schema = 'public' AND table_name = 'inventory_movements' AND column_name = 'adjustment_id') AS adjustment_origin_column,
+        WHERE table_schema = 'public' AND table_name = 'inventory_movements' AND column_name = 'waste_id') AS waste_origin_column,
       (SELECT count(*)::integer FROM pg_constraint
         WHERE conrelid = 'public.inventory_movements'::regclass
           AND conname = 'inventory_movements_origin_check') AS origin_check;
   `);
   assert.deepEqual(schema.rows[0], {
-    ingest: 'r008_ingest_hub_inventory_adjustment_events(text,uuid,jsonb)',
-    adjustment_origin_column: 1,
+    ingest: 'r009_ingest_hub_inventory_waste_events(text,uuid,jsonb)',
+    waste_origin_column: 1,
     origin_check: 1,
   });
 
   await db.exec(`
-    INSERT INTO auth.users (id, email) VALUES (${quote(fixture.owner)}, 'correction-owner@example.test');
+    INSERT INTO auth.users (id, email) VALUES (${quote(fixture.owner)}, 'waste-owner@example.test');
     INSERT INTO public.businesses (id, name, owner_id, onboarding_status)
-    VALUES (${quote(fixture.business)}, 'Count correction test', ${quote(fixture.owner)}, 'COMPLETED');
+    VALUES (${quote(fixture.business)}, 'Inventory waste test', ${quote(fixture.owner)}, 'COMPLETED');
     INSERT INTO public.branches (id, business_id, name)
-    VALUES (${quote(fixture.branch)}, ${quote(fixture.business)}, 'Correction branch');
+    VALUES (${quote(fixture.branch)}, ${quote(fixture.business)}, 'Waste branch');
     INSERT INTO public.devices (id, device_id, business_id, branch_id, name, type, status, last_seen, operational_role)
-    VALUES (${quote(fixture.device)}, 'HUB-COUNT-CORRECTION', ${quote(fixture.business)}, ${quote(fixture.branch)}, 'Correction Hub', 'TERMINAL', 'ACTIVE', now(), 'CASHIER_HUB');
+    VALUES (${quote(fixture.device)}, 'HUB-INVENTORY-WASTE', ${quote(fixture.business)}, ${quote(fixture.branch)}, 'Waste Hub', 'TERMINAL', 'ACTIVE', now(), 'CASHIER_HUB');
     INSERT INTO public.hub_branch_authority (branch_id, business_id, active_hub_device_id, revocation_version)
     VALUES (${quote(fixture.branch)}, ${quote(fixture.business)}, ${quote(fixture.device)}, 0);
     INSERT INTO public.hub_authorization_bundles (
@@ -165,33 +167,33 @@ try {
     VALUES (${quote(fixture.branch)}, ${quote(fixture.product)}, ${quote(fixture.business)}, 8);
   `);
 
-  const cloudEvent = ({ eventId, commandId, adjustmentId, staffId, sessionId, sequence, items }) => ({
+  const cloudEvent = ({ eventId, commandId, wasteId, staffId, sessionId, sequence, reason = 'SPOILAGE', items }) => ({
     eventId,
     commandId,
-    entityId: adjustmentId,
-    entityType: 'inventory_adjustment',
-    action: 'INVENTORY_ADJUSTED',
+    entityId: wasteId,
+    entityType: 'inventory_waste',
+    action: 'INVENTORY_WASTED',
     businessId: fixture.business,
     branchId: fixture.branch,
-    deviceId: 'HUB-COUNT-CORRECTION',
+    deviceId: 'HUB-INVENTORY-WASTE',
     staffId,
     staffSessionId: sessionId,
     sequence,
     eventOrdinal: 0,
     timestamp: new Date().toISOString(),
     schemaVersion: 1,
-    payload: { id: adjustmentId, adjustmentId, status: 'ADJUSTED', reason: 'COUNT_CORRECTION', items },
+    payload: { id: wasteId, wasteId, status: 'RECORDED', reason, items },
   });
   const ingest = async (event) => {
     const result = await db.query(
-      'SELECT public.r008_ingest_hub_inventory_adjustment_events($1::text, $2::uuid, $3::jsonb) AS receipt',
-      ['HUB-COUNT-CORRECTION', fixture.bundle, JSON.stringify([event])],
+      'SELECT public.r009_ingest_hub_inventory_waste_events($1::text, $2::uuid, $3::jsonb) AS receipt',
+      ['HUB-INVENTORY-WASTE', fixture.bundle, JSON.stringify([event])],
     );
     assert.deepEqual(result.rows[0].receipt, { acknowledgedEventIds: [event.eventId] });
   };
-  const correctionItem = (quantityDelta, stockBefore, stockAfter) => ({
+  const wasteItem = (quantity, stockBefore, stockAfter) => ({
     productId: fixture.product,
-    quantityDelta,
+    quantity,
     stockBefore,
     stockAfter,
   });
@@ -203,99 +205,102 @@ try {
         business_id, branch_id, hub_device_id, staff_id, staff_session_id,
         sequence, event_ordinal, occurred_at, schema_version, payload, content_sha256
       ) VALUES (
-        '60000000-0000-4000-8000-000000000121', '50000000-0000-4000-8000-000000000121', ${quote(fixture.adjustment)}, 'inventory_adjustment', 'INVENTORY_ADJUSTED',
+        '60000000-0000-4000-8000-000000000131', '50000000-0000-4000-8000-000000000131', ${quote(fixture.waste)}, 'inventory_waste', 'INVENTORY_WASTED',
         ${quote(fixture.business)}, ${quote(fixture.branch)}, ${quote(fixture.device)}, ${quote(fixture.cashier)}, ${quote(fixture.cashierSession)},
-        1, 0, now(), 1, ${quote(JSON.stringify({ id: fixture.adjustment, adjustmentId: fixture.adjustment, status: 'ADJUSTED', reason: 'COUNT_CORRECTION', items: [correctionItem(-3, 8, 5)] }))}::jsonb,
+        1, 0, now(), 1, ${quote(JSON.stringify({ id: fixture.waste, wasteId: fixture.waste, status: 'RECORDED', reason: 'SPOILAGE', items: [wasteItem(3, 8, 5)] }))}::jsonb,
         decode(repeat('00', 32), 'hex')
       );
     `),
-    (error) => error instanceof Error && error.message.includes('R008_INVENTORY_ADJUSTMENT_ROLE_OR_SCOPE_FORBIDDEN'),
-    'A Cashier cannot enter a count correction directly.',
+    (error) => error instanceof Error && error.message.includes('R009_INVENTORY_WASTE_ROLE_OR_SCOPE_FORBIDDEN'),
+    'A Cashier cannot enter inventory waste directly.',
   );
 
   const stale = cloudEvent({
-    eventId: '60000000-0000-4000-8000-000000000122',
-    commandId: '50000000-0000-4000-8000-000000000122',
-    adjustmentId: fixture.staleAdjustment,
+    eventId: '60000000-0000-4000-8000-000000000132',
+    commandId: '50000000-0000-4000-8000-000000000132',
+    wasteId: fixture.staleWaste,
     staffId: fixture.manager,
     sessionId: fixture.managerSession,
     sequence: 1,
-    items: [correctionItem(-3, 7, 4)],
+    items: [wasteItem(3, 7, 4)],
   });
   await assert.rejects(
     () => ingest(stale),
-    (error) => error instanceof Error && error.message.includes('R008_INVENTORY_ADJUSTMENT_STOCK_BALANCE_MISMATCH'),
-    'A stale server stock fact must reject the entire count correction.',
+    (error) => error instanceof Error && error.message.includes('R009_INVENTORY_WASTE_STOCK_BALANCE_MISMATCH'),
+    'A stale server stock fact must reject the entire waste record.',
   );
   const afterStale = await db.query(`
     SELECT
-      (SELECT count(*)::integer FROM public.inventory_adjustments) AS corrections,
+      (SELECT count(*)::integer FROM public.inventory_waste) AS waste_records,
       (SELECT quantity::text FROM public.inventory_branch_balances WHERE branch_id = ${quote(fixture.branch)} AND product_id = ${quote(fixture.product)}) AS balance;
   `);
-  assert.deepEqual(afterStale.rows[0], { corrections: 0, balance: '8.000' });
+  assert.deepEqual(afterStale.rows[0], { waste_records: 0, balance: '8.000' });
 
   const valid = cloudEvent({
-    eventId: '60000000-0000-4000-8000-000000000123',
-    commandId: '50000000-0000-4000-8000-000000000123',
-    adjustmentId: fixture.adjustment,
+    eventId: '60000000-0000-4000-8000-000000000133',
+    commandId: '50000000-0000-4000-8000-000000000133',
+    wasteId: fixture.waste,
     staffId: fixture.manager,
     sessionId: fixture.managerSession,
     sequence: 1,
-    items: [correctionItem(-3, 8, 5)],
+    reason: 'DAMAGE',
+    items: [wasteItem(3, 8, 5)],
   });
   await ingest(valid);
   await ingest(valid);
   const acceptedFacts = await db.query(`
     SELECT
       (SELECT quantity::text FROM public.inventory_branch_balances WHERE branch_id = ${quote(fixture.branch)} AND product_id = ${quote(fixture.product)}) AS balance,
-      (SELECT count(*)::integer FROM public.inventory_adjustments WHERE adjustment_id = ${quote(fixture.adjustment)}) AS correction_count,
-      (SELECT count(*)::integer FROM public.inventory_adjustment_lines WHERE adjustment_id = ${quote(fixture.adjustment)}) AS line_count,
-      (SELECT movement_type FROM public.inventory_movements WHERE adjustment_id = ${quote(fixture.adjustment)} LIMIT 1) AS movement_type,
-      (SELECT quantity_delta::text FROM public.inventory_movements WHERE adjustment_id = ${quote(fixture.adjustment)} LIMIT 1) AS quantity_delta,
+      (SELECT count(*)::integer FROM public.inventory_waste WHERE waste_id = ${quote(fixture.waste)}) AS waste_count,
+      (SELECT count(*)::integer FROM public.inventory_waste_lines WHERE waste_id = ${quote(fixture.waste)}) AS line_count,
+      (SELECT movement_type FROM public.inventory_movements WHERE waste_id = ${quote(fixture.waste)} LIMIT 1) AS movement_type,
+      (SELECT quantity_delta::text FROM public.inventory_movements WHERE waste_id = ${quote(fixture.waste)} LIMIT 1) AS quantity_delta,
+      (SELECT reason FROM public.inventory_waste WHERE waste_id = ${quote(fixture.waste)}) AS reason,
       (SELECT count(*)::integer FROM public.hub_events WHERE event_id = ${quote(valid.eventId)}) AS event_count;
   `);
   assert.deepEqual(acceptedFacts.rows[0], {
     balance: '5.000',
-    correction_count: 1,
+    waste_count: 1,
     line_count: 1,
-    movement_type: 'MANAGER_COUNT_CORRECTION',
+    movement_type: 'MANAGER_WASTE',
     quantity_delta: '-3.000',
+    reason: 'DAMAGE',
     event_count: 1,
   });
 
-  const noOp = cloudEvent({
-    eventId: '60000000-0000-4000-8000-000000000124',
-    commandId: '50000000-0000-4000-8000-000000000124',
-    adjustmentId: fixture.duplicateLineAdjustment,
+  const insufficient = cloudEvent({
+    eventId: '60000000-0000-4000-8000-000000000134',
+    commandId: '50000000-0000-4000-8000-000000000134',
+    wasteId: fixture.staleWaste,
     staffId: fixture.manager,
     sessionId: fixture.managerSession,
     sequence: 2,
-    items: [correctionItem(0, 5, 5)],
+    items: [wasteItem(6, 5, -1)],
   });
   await assert.rejects(
-    () => ingest(noOp),
-    (error) => error instanceof Error && error.message.includes('R008_INVENTORY_ADJUSTMENT_STOCK_FACTS_INVALID'),
-    'A no-op count correction cannot enter the ledger.',
+    () => ingest(insufficient),
+    (error) => error instanceof Error && error.message.includes('R009_INVENTORY_WASTE_STOCK_FACTS_INVALID'),
+    'Waste cannot exceed the current signed balance.',
   );
 
   const duplicateLine = cloudEvent({
-    eventId: '60000000-0000-4000-8000-000000000125',
-    commandId: '50000000-0000-4000-8000-000000000125',
-    adjustmentId: fixture.duplicateLineAdjustment,
+    eventId: '60000000-0000-4000-8000-000000000135',
+    commandId: '50000000-0000-4000-8000-000000000135',
+    wasteId: fixture.duplicateLineWaste,
     staffId: fixture.manager,
     sessionId: fixture.managerSession,
     sequence: 2,
-    items: [correctionItem(-1, 5, 4), correctionItem(1, 4, 5)],
+    items: [wasteItem(1, 5, 4), wasteItem(1, 4, 3)],
   });
   await assert.rejects(
     () => ingest(duplicateLine),
-    (error) => error instanceof Error && error.message.includes('R008_INVENTORY_ADJUSTMENT_DUPLICATE_PRODUCT'),
-    'A count correction cannot contain the same product twice.',
+    (error) => error instanceof Error && error.message.includes('R009_INVENTORY_WASTE_DUPLICATE_PRODUCT'),
+    'A waste record cannot contain the same product twice.',
   );
   const finalBalance = await db.query(`SELECT quantity::text AS balance FROM public.inventory_branch_balances WHERE branch_id = ${quote(fixture.branch)} AND product_id = ${quote(fixture.product)};`);
-  assert.equal(finalBalance.rows[0].balance, '5.000', 'A rejected correction cannot change stock.');
+  assert.equal(finalBalance.rows[0].balance, '5.000', 'A rejected waste record cannot change stock.');
 } finally {
   await db.close();
 }
 
-console.log('R012 inventory count-correction contract checks passed');
+console.log('R013 inventory-waste contract checks passed');

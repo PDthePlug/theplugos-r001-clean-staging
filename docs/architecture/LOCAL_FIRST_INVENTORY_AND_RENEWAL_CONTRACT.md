@@ -25,8 +25,9 @@ The first implementation covers only these event effects:
 | `order.status.transition` to `CANCELLED` | Release the original reservation once | None |
 | `inventory.receive` / `INVENTORY_RECEIVED` | Increase a counted active-product branch balance once | None |
 | `inventory.adjust` / `INVENTORY_ADJUSTED` | Reconcile an active-product balance to a Manager-counted final quantity once | None |
+| `inventory.waste` / `INVENTORY_WASTED` | Remove a Manager-recorded unusable active-product quantity once | None |
 
-Card, QR, cash capture, refunds, waste, BOM, supplier and
+Card, QR, cash capture, refunds, BOM, supplier and
 purchase-order workflows, and financial postings are deliberately outside this
 slice. They must not be represented as successful by the UI or projected as if
 this contract had settled them.
@@ -41,8 +42,9 @@ selects an item and quantity.
 The cloud keeps the branch-scoped current balance in
 `inventory_branch_balances`, and appends a server-owned
 `inventory_movements` row for every replicated reservation, release,
-Manager-counted receipt, or Manager count correction. R007/R008 also store one
-immutable intake or correction header and line per event. A movement contains
+Manager-counted receipt, Manager count correction, or Manager-recorded waste.
+R007/R008/R009 also store one immutable intake, correction, or waste header and
+line per event. A movement contains
 the immutable Hub event ID, business, branch, product, order-or-inventory
 origin, movement type, signed quantity delta, balance-before, balance-after,
 actor/session facts, and occurrence time. The legacy

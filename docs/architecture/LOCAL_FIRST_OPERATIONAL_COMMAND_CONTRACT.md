@@ -70,7 +70,8 @@ stock movement, audit record, or outbox item remains.
 | `payment.capture` / `payment.refund` | provider/tender evidence, idempotency, balanced financial postings, order transition, audit and replication events |
 | `inventory.receive` | Manager-counted active-product quantity, derived before/after balance, immutable receipt and movement, actor, audit and replication events |
 | `inventory.adjust` | Manager-counted final active-product balance, derived signed difference, immutable count correction and movement, actor, audit and replication events |
-| `inventory.waste`, `inventory.void` | immutable stock movement, source document/reason, actor, resulting balance, audit and replication events |
+| `inventory.waste` | Manager-recorded physical unusable quantity, fixed reason, derived stock balance, immutable movement, audit and replication events |
+| `inventory.void` | source-document reversal, actor, resulting balance, audit and replication events |
 | `shift.open`, `shift.close`, `cashup.submit`, `cashup.approve` | active-shift validation, float/counts, variance, approval authority, financial postings, audit and replication events |
 | `device.pair`, `device.revoke`, `staff.session.*` | server-authoritative enrollment/revocation/lockout facts plus local authorization-bundle refresh |
 

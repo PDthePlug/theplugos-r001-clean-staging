@@ -20,6 +20,7 @@ class HubCommandRouter(private val database: HubDatabase) {
             "payment.capture" -> captureCashPayment(command, context)
             "inventory.receive" -> receiveInventory(command, context)
             "inventory.adjust" -> adjustInventory(command, context)
+            "inventory.waste" -> wasteInventory(command, context)
             else -> throw HubCommandRejectedException("Command ${command.type} is not implemented by this Hub release.")
         }
     }
@@ -489,6 +490,85 @@ class HubCommandRouter(private val database: HubDatabase) {
         )
     }
 
+    /** A waste record removes a Manager-counted unusable quantity from the
+     * signed local balance. It has no supplier, cost, cash, tax, approval, or
+     * financial-loss semantics; those need their own verified contracts. */
+    private fun wasteInventory(command: OperationalCommand, context: VerifiedCommandContext): RoutedCommand {
+        command.payload.requireExactFields(setOf("wasteId", "reason", "items"), "Inventory waste")
+        val wasteId = command.payload.requiredUuid("wasteId", "Inventory waste ID")
+        if (database.projection("inventory_waste", wasteId) != null) {
+            throw HubCommandRejectedException("An inventory waste record with this wasteId already exists on this Hub.")
+        }
+        val reason = command.payload.optString("reason", "").trim()
+        if (reason !in SUPPORTED_INVENTORY_WASTE_REASONS) {
+            throw HubCommandRejectedException("Inventory waste requires one supported physical reason.")
+        }
+        val items = command.payload.optJSONArray("items")
+            ?: throw HubCommandRejectedException("Inventory waste requires line items.")
+        if (items.length() == 0 || items.length() > MAX_INVENTORY_WASTE_LINES) {
+            throw HubCommandRejectedException("Inventory waste has an unsupported line-item count.")
+        }
+
+        val seenProductIds = mutableSetOf<String>()
+        val normalizedItems = org.json.JSONArray()
+        val stockProjections = mutableListOf<ProjectionWrite>()
+        for (index in 0 until items.length()) {
+            val item = items.optJSONObject(index)
+                ?: throw HubCommandRejectedException("Every inventory waste line must be an object.")
+            item.requireExactFields(setOf("productId", "quantity"), "Every inventory waste line")
+            val productId = requireUuid(item.optString("productId", "").trim(), "Every inventory waste line needs a UUID productId.")
+            if (!seenProductIds.add(productId)) {
+                throw HubCommandRejectedException("An inventory waste record cannot contain the same product more than once.")
+            }
+            val quantity = item.optDouble("quantity", Double.NaN)
+            if (!quantity.isFinite() || quantity <= 0.0 || quantity > MAX_INVENTORY_WASTE_QUANTITY || !hasQuantityPrecision(quantity)) {
+                throw HubCommandRejectedException("Inventory waste quantity must be a supported positive number with at most three decimal places.")
+            }
+            val catalogProduct = database.projection("catalog_products", productId)
+                ?: throw HubCommandRejectedException("Product $productId is not present in the Hub catalog snapshot.")
+            if (catalogProduct.optString("status", "").trim() != "ACTIVE") {
+                throw HubCommandRejectedException("Product $productId is not active for a new inventory waste record.")
+            }
+            val stockBefore = catalogProduct.optDouble("stock", Double.NaN)
+            if (!stockBefore.isFinite() || stockBefore < 0.0 || stockBefore > MAX_STOCK_QUANTITY || !hasQuantityPrecision(stockBefore)) {
+                throw HubCommandRejectedException("Product $productId has an invalid signed Hub stock balance.")
+            }
+            if (quantity > stockBefore + QUANTITY_EPSILON) {
+                throw HubCommandRejectedException("Inventory waste quantity exceeds the current signed stock balance for product $productId.")
+            }
+            val stockAfter = roundQuantity(stockBefore - quantity)
+            if (!stockAfter.isFinite() || stockAfter < 0.0 || stockAfter > MAX_STOCK_QUANTITY) {
+                throw HubCommandRejectedException("Product $productId would have an invalid signed stock balance after waste.")
+            }
+            normalizedItems.put(
+                JSONObject()
+                    .put("productId", productId)
+                    .put("quantity", quantity)
+                    .put("stockBefore", stockBefore)
+                    .put("stockAfter", stockAfter)
+            )
+            stockProjections += ProjectionWrite(
+                "catalog_products",
+                productId,
+                JSONObject(catalogProduct.toString()).put("stock", stockAfter)
+            )
+        }
+
+        val eventPayload = JSONObject()
+            .put("id", wasteId)
+            .put("wasteId", wasteId)
+            .put("status", "RECORDED")
+            .put("reason", reason)
+            .put("items", normalizedItems)
+        val wasteProjection = JSONObject(eventPayload.toString())
+            .put("businessId", context.businessId)
+            .put("branchId", context.branchId)
+        return RoutedCommand(
+            events = listOf(HubEventDraft(wasteId, "inventory_waste", "INVENTORY_WASTED", eventPayload)),
+            projections = listOf(ProjectionWrite("inventory_waste", wasteId, wasteProjection)) + stockProjections
+        )
+    }
+
     private fun JSONObject.requiredOrderId(): String {
         val value = optString("orderId", optString("id", "")).trim()
         return requireUuid(value, "Order command requires orderId.")
@@ -733,8 +813,10 @@ class HubCommandRouter(private val database: HubDatabase) {
         const val MAX_ORDER_LINE_ITEMS = 100
         const val MAX_INVENTORY_RECEIPT_LINES = 100
         const val MAX_INVENTORY_ADJUSTMENT_LINES = 100
+        const val MAX_INVENTORY_WASTE_LINES = 100
         const val MAX_LINE_QUANTITY = 1_000_000.0
         const val MAX_INVENTORY_RECEIPT_QUANTITY = 99_999_999_999.999
+        const val MAX_INVENTORY_WASTE_QUANTITY = 99_999_999_999.999
         const val MAX_ORDER_TOTAL = 999_999_999.99
         const val MAX_CASH_AMOUNT = 999_999_999.99
         const val MAX_STOCK_QUANTITY = 99_999_999_999.999
@@ -742,6 +824,7 @@ class HubCommandRouter(private val database: HubDatabase) {
         const val MONEY_EPSILON = 0.000_001
         const val QUANTITY_EPSILON = 0.000_001
         val SUPPORTED_TENDER_INTENTS = setOf("CASH", "CARD", "SPAZAPAY_QR")
+        val SUPPORTED_INVENTORY_WASTE_REASONS = setOf("SPOILAGE", "DAMAGE", "EXPIRED")
         val CAPTURABLE_ORDER_STATUSES = setOf("PLACED", "PREPARING", "READY")
     }
 }
