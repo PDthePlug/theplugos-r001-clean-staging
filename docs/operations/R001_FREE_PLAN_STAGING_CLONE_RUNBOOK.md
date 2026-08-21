@@ -261,9 +261,16 @@ PGOPTIONS='-c default_transaction_read_only=on -c statement_timeout=0' \
 
 `supabase db dump` invokes PostgreSQL dump tooling and performs only catalog
 and table reads on the source. For this environment, if Docker is unavailable,
-the pinned CLI's `--dry-run` output is saved as the exact native
-`pg_dump`/`pg_dumpall` command contract and executed with installed PostgreSQL
-clients. No filters may be improvised.
+the pinned CLI's `--dry-run` output is locked into
+`scripts/dump-r001-production-readonly.sh` and executed with installed native
+PostgreSQL clients:
+
+```bash
+bash scripts/dump-r001-production-readonly.sh
+```
+
+No filters may be improvised. The script has no staging connection and forces
+every source connection into read-only mode.
 
 Inspect before restore:
 
