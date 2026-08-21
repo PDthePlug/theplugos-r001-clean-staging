@@ -43,7 +43,10 @@ Do not enable a migration flag that interprets unknown values as plaintext.
 6. Verify credential/session/pairing tables cannot be selected by `anon` or
    `authenticated`.
 7. Verify all intended RPC grants and all prohibited direct grants.
-8. Treat any failed case as a migration failure; do not patch the database by
+8. Verify trusted-device enforcement and source-aware rate limits in front of
+   anonymous PIN verification and device pairing. Database lockout alone is
+   not the public-edge control.
+9. Treat any failed case as a migration failure; do not patch the database by
    hand.
 
 ## Rollback rehearsal
@@ -70,4 +73,3 @@ Production execution requires all of the following:
 - named operator and rollback owner;
 - tested backups and recovery time;
 - explicit authorization to apply the live migration.
-

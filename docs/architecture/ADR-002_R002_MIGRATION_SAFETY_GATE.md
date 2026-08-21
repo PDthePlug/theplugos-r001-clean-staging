@@ -76,12 +76,19 @@ R002 adds:
 
 - a session-token revocation RPC;
 - persistent per-device pairing-attempt counters and lockout;
+- transaction-serialized generation that prevents an active six-digit pairing
+  code from colliding across tenants;
 - collision-resistant security audit event IDs;
 - exact privilege grants for every new table and RPC.
 
 Per-device database throttling is defense in depth. An API-gateway/Edge
 Function rate limit is still required before public production exposure,
 because an attacker can rotate a caller-supplied device ID.
+
+The anonymous PIN-verification route also remains dependent on the future
+trusted-device boundary and source-aware gateway throttling. Persistent staff
+lockout limits guessing but can otherwise be abused to deny service to a known
+staff identity.
 
 ### 6. No live execution in Phase 1
 
@@ -147,4 +154,3 @@ They remain open in the remediation register and block production readiness.
    and revocation are covered by executable tests.
 6. The complete pre-existing test suite, type-check, and production build run.
 7. No Supabase project is changed.
-

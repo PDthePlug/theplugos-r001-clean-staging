@@ -22,19 +22,24 @@ Phase 1 can complete T1 and T2 only. It must not claim T3–T5.
 5. Migrated `staff_members.pin_hash` values become NULL only after safe copy.
 6. Credential, session, and pairing-attempt tables reject browser-role reads.
 7. Owner account authority can set an onboarding PIN.
-8. Valid PIN succeeds; invalid PIN does not disclose staff existence.
-9. Five invalid PIN attempts persist a five-minute lockout.
-10. Lockout state survives a new database client/session.
-11. Valid manager/owner login issues a short-lived security session.
-12. A manager cannot modify OWNER credentials.
-13. A manager cannot administer another branch.
-14. Session revocation invalidates the delegated token.
-15. Pairing codes are bcrypt-hashed, expiring, and single-use.
-16. Five invalid pairing attempts persist a per-device lockout.
-17. Device enrollment creates the exact business/branch binding.
-18. Device revocation prevents status/bootstrap success.
-19. Security audit event IDs remain unique under a burst test.
-20. Running the preflight on the migrated fixture reports no unsafe legacy
+8. The explicit service-role grant reaches its documented administration path.
+9. Valid PIN succeeds; invalid PIN does not disclose staff existence.
+10. Five invalid PIN attempts persist a five-minute lockout.
+11. Lockout state survives a new database client/session.
+12. Valid manager/owner login issues a short-lived security session.
+13. A manager cannot modify OWNER credentials.
+14. A manager cannot administer another branch.
+15. Session revocation invalidates the delegated token.
+16. Active six-digit pairing codes cannot collide across tenants.
+17. Pairing codes are bcrypt-hashed, expiring, and single-use.
+18. Five invalid pairing attempts persist a per-device lockout.
+19. Device enrollment creates the exact business/branch binding.
+20. Bootstrap data is branch-scoped and excludes credentials.
+21. Manager device authority cannot cross a branch or business boundary.
+22. Device revocation prevents status/bootstrap success.
+23. Security audit event IDs remain unique under a burst test.
+24. Intended anonymous RPC execution works without granting table reads.
+25. Running the preflight on the migrated fixture reports no unsafe legacy
     credential values.
 
 ## Required T3 staging cases
@@ -52,9 +57,13 @@ These remain mandatory after Phase 1:
 - Confirm current device-ID bootstrap risk is resolved before production.
 - Confirm rollback from a restored backup.
 
-## Phase 1 release rule
+## Phase 1 candidate rule
 
-The candidate may be packaged when all T1/T2 checks and the repository suite
-pass. It remains explicitly **NOT APPROVED FOR LIVE MIGRATION** until T3 and T4
-have passed under a separate authorization.
+The R002 candidate may be committed to its isolated implementation branch when
+all T1/T2 checks pass and the complete repository suite has been run. It may
+not be merged or released while any repository test remains failed. A failure
+outside the authorized Phase 1 boundary must be preserved as a named blocker,
+not hidden by weakening the test or changing unrelated architecture.
 
+The candidate remains explicitly **NOT APPROVED FOR LIVE MIGRATION** until T3
+and T4 have passed under a separate authorization.

@@ -37,21 +37,21 @@ has passed.
 | BR-013 | Composite business/branch binding | E | 2 | OPEN |
 | BR-014 | Multi-business user restoration | B | 2 | OPEN |
 | BR-015 | Ordinary StaffMember state excludes PIN | B | 2 | OPEN |
-| BR-016 | Isolated staff_credentials | B | 1 | IN_PROGRESS |
-| BR-017 | set_staff_pin | B | 1 | IN_PROGRESS |
-| BR-018 | Server-side PIN verification | B | 1 | IN_PROGRESS |
-| BR-019 | Persistent failed attempts/lockout | B | 1 | IN_PROGRESS |
-| BR-020 | Staff security sessions | E | 2 | IN_PROGRESS |
-| BR-021 | Delegated manager security authority | E | 2 | OPEN |
+| BR-016 | Isolated staff_credentials | B | 1 | REPOSITORY_VERIFIED |
+| BR-017 | set_staff_pin | B | 1 | REPOSITORY_VERIFIED |
+| BR-018 | Server-side PIN verification | B | 1 | REPOSITORY_VERIFIED |
+| BR-019 | Persistent failed attempts/lockout | B | 1 | REPOSITORY_VERIFIED |
+| BR-020 | Staff security sessions | E | 2 | REPOSITORY_VERIFIED |
+| BR-021 | Delegated manager security authority | E | 2 | REPOSITORY_VERIFIED |
 | BR-022 | Staff suspension/deletion | E | 2 | OPEN |
-| BR-023 | Staff-session logout/revocation | D | 2 | IN_PROGRESS |
-| BR-024 | Secure pairing-code creation | B | 3 | IN_PROGRESS |
-| BR-025 | Hashed, expiring, single-use code storage | B | 3 | IN_PROGRESS |
-| BR-026 | pair_device_with_code enrollment | B | 3 | IN_PROGRESS |
+| BR-023 | Staff-session logout/revocation | D | 2 | REPOSITORY_VERIFIED |
+| BR-024 | Secure pairing-code creation | B | 3 | REPOSITORY_VERIFIED |
+| BR-025 | Hashed, expiring, single-use code storage | B | 3 | REPOSITORY_VERIFIED |
+| BR-026 | pair_device_with_code enrollment | B | 3 | REPOSITORY_VERIFIED |
 | BR-027 | Device identity | E | 3 | OPEN |
 | BR-028 | Device trust | E | 3 | OPEN |
 | BR-029 | Secure device bootstrap | E | 3 | OPEN |
-| BR-030 | Device revocation | B | 3 | OPEN |
+| BR-030 | Device revocation | B | 3 | REPOSITORY_VERIFIED |
 | BR-031 | Revocation propagation/reactivation | B | 3 | OPEN |
 | BR-032 | Retirement of legacy pairing/device authority | E | 3 | OPEN |
 | BR-033 | Cashier order creation | C | 4 | OPEN |
@@ -90,7 +90,7 @@ has passed.
 | BR-066 | Ledger | D | 7 | OPEN |
 | BR-067 | Shift/cashup | C | 7 | OPEN |
 | BR-068 | Audit trail | B | 7 | OPEN |
-| BR-069 | Existing automated test suite | B | Continuous | IN_PROGRESS |
+| BR-069 | Existing automated test suite | B | Continuous | BLOCKED |
 | BR-070 | Type-check and production build | A | Continuous | PROTECTED |
 
 ## Baseline distribution
@@ -107,3 +107,15 @@ The distribution is updated only after a phase gate closes. Phase 1 cannot
 promote a capability to A because it does not include Supabase staging/live
 acceptance.
 
+## Phase 1 evidence note
+
+`REPOSITORY_VERIFIED` on BR-016–BR-021, BR-023–BR-026, and BR-030 means only
+that the isolated PostgreSQL migration/RPC primitive passed the T1/T2 gate. It
+does not change the audit classification, prove current application wiring, or
+authorize a Supabase migration. BR-027–BR-029 remain production blockers, so
+the device primitives are not a secure end-to-end device trust system.
+
+BR-069 is `BLOCKED`: the complete application suite still records 28/30 tests
+passing. Both failures correctly expose the missing default CloudSyncAdapter
+and remain assigned to Phase 5; Phase 1 did not alter those tests or the sync
+architecture.
