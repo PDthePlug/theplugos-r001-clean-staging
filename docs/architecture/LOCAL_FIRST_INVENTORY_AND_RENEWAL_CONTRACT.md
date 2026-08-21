@@ -24,8 +24,9 @@ The first implementation covers only these event effects:
 | `order.create` / `ORDER_PLACED` | Reserve the ordered quantity | Record tender intent only |
 | `order.status.transition` to `CANCELLED` | Release the original reservation once | None |
 | `inventory.receive` / `INVENTORY_RECEIVED` | Increase a counted active-product branch balance once | None |
+| `inventory.adjust` / `INVENTORY_ADJUSTED` | Reconcile an active-product balance to a Manager-counted final quantity once | None |
 
-Card, QR, cash capture, refunds, stock adjustment, waste, BOM, supplier and
+Card, QR, cash capture, refunds, waste, BOM, supplier and
 purchase-order workflows, and financial postings are deliberately outside this
 slice. They must not be represented as successful by the UI or projected as if
 this contract had settled them.
@@ -39,12 +40,12 @@ selects an item and quantity.
 
 The cloud keeps the branch-scoped current balance in
 `inventory_branch_balances`, and appends a server-owned
-`inventory_movements` row for every replicated reservation, release, or
-Manager-counted receipt. R007 also stores one immutable receipt header and
-line per counted intake. A movement contains the immutable Hub event ID,
-business, branch, product, order-or-receipt origin, movement type, signed
-quantity delta, balance-before, balance-after, actor/session facts, and
-occurrence time. The legacy
+`inventory_movements` row for every replicated reservation, release,
+Manager-counted receipt, or Manager count correction. R007/R008 also store one
+immutable intake or correction header and line per event. A movement contains
+the immutable Hub event ID, business, branch, product, order-or-inventory
+origin, movement type, signed quantity delta, balance-before, balance-after,
+actor/session facts, and occurrence time. The legacy
 `catalog_products.stock_quantity` remains product master-data compatibility
 only; it is never used as a shared cross-branch operational balance.
 
@@ -54,9 +55,9 @@ second movement nor a second balance change.
 
 R003 seeds a branch-specific product's first balance from its R001 product
 quantity. A business-wide product receives a zero balance in each branch until
-a Manager records the narrow R007 counted receipt. Copying one global legacy
-quantity into multiple branch balances would fabricate stock, so the migration
-deliberately fails safe instead.
+a Manager records the narrow R007 counted receipt or R008 physical count
+correction. Copying one global legacy quantity into multiple branch balances
+would fabricate stock, so the migration deliberately fails safe instead.
 
 ## Order payload contract
 

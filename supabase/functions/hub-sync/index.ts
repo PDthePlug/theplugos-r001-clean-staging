@@ -97,7 +97,8 @@ type HubEventReceiver =
   | 'r003_ingest_hub_events'
   | 'r005_ingest_hub_financial_events'
   | 'r006_ingest_hub_shift_close_events'
-  | 'r007_ingest_hub_inventory_events';
+  | 'r007_ingest_hub_inventory_events'
+  | 'r008_ingest_hub_inventory_adjustment_events';
 
 function receiverForEvent(value: unknown): HubEventReceiver {
   const event = object(value, 'Sync event');
@@ -106,6 +107,7 @@ function receiverForEvent(value: unknown): HubEventReceiver {
   if (action === 'SHIFT_OPENED' || action === 'PAYMENT_CAPTURED') return 'r005_ingest_hub_financial_events';
   if (action === 'SHIFT_CLOSED') return 'r006_ingest_hub_shift_close_events';
   if (action === 'INVENTORY_RECEIVED') return 'r007_ingest_hub_inventory_events';
+  if (action === 'INVENTORY_ADJUSTED') return 'r008_ingest_hub_inventory_adjustment_events';
   throw new HubHttpError(400, 'Sync event action is invalid.');
 }
 

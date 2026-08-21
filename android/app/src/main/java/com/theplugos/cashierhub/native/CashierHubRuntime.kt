@@ -501,7 +501,7 @@ class CashierHubRuntime(context: Context) {
 
     private companion object {
         val NATIVE_BRIDGE_COMMAND_TYPES = setOf(
-            "shift.open", "shift.close", "order.create", "order.status.transition", "payment.capture", "inventory.receive"
+            "shift.open", "shift.close", "order.create", "order.status.transition", "payment.capture", "inventory.receive", "inventory.adjust"
         )
         const val CLOUD_MAINTENANCE_INTERVAL_SECONDS = 30L
         const val RENEWAL_LEAD_MS = 30L * 60L * 1000L

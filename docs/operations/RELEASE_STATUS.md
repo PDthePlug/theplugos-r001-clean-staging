@@ -5,8 +5,9 @@
   migrations, and environment-specific evidence records
 - **Last reconciled source:** the R003 native Cashier Hub authority foundation
   plus source-only order-transition, cash-capture, cash-collection,
-  pending-order-cancellation, cash-shift-close, inventory-receipt, native
-  Kitchen, and native station-entry additions
+  pending-order-cancellation, cash-shift-close, inventory-receipt,
+  inventory-count-correction, native Kitchen, and native station-entry
+  additions
 - **Production mutation authority:** explicitly withheld
 
 ## What is true today
@@ -40,6 +41,11 @@ The source-only Manager inventory-receipt workflow can record a physical
 counted quantity for active signed branch products. It does not demonstrate a
 supplier, purchase order, invoice, cost, payment, allocation, stock adjustment,
 or cloud acknowledgement.
+
+The source-only Manager inventory-count-correction workflow can record an
+observed final quantity for active signed branch products and derive the stock
+difference. It does not classify waste/loss, or demonstrate a supplier,
+purchase order, cost, payment, approval, or cloud acknowledgement.
 
 The source-only native pending-order-cancellation workflow exposes only the
 already-authorized `PENDING` cancellation transitions for Cashier/Manager

@@ -833,7 +833,7 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
             LEFT JOIN command_receipts receipt ON receipt.command_id = intent.command_id
             WHERE intent.staff_session_id = ?
               AND receipt.command_id IS NULL
-              AND intent.command_type IN ('shift.open', 'shift.close', 'order.create', 'order.status.transition', 'payment.capture', 'inventory.receive')
+              AND intent.command_type IN ('shift.open', 'shift.close', 'order.create', 'order.status.transition', 'payment.capture', 'inventory.receive', 'inventory.adjust')
             ORDER BY intent.created_at ASC, intent.sequence ASC
             LIMIT ?
             """.trimIndent(),
@@ -1702,6 +1702,6 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
         val PENDING_CASH_ORDER_STATUSES = setOf("PLACED", "PREPARING", "READY")
         val CANCELLABLE_MANAGER_ORDER_STATUSES = setOf("PLACED", "PREPARING")
         val PENDING_KITCHEN_ORDER_STATUSES = setOf("PLACED", "PREPARING")
-        val RECOVERABLE_NATIVE_COMMAND_TYPES = setOf("shift.open", "shift.close", "order.create", "order.status.transition", "payment.capture", "inventory.receive")
+        val RECOVERABLE_NATIVE_COMMAND_TYPES = setOf("shift.open", "shift.close", "order.create", "order.status.transition", "payment.capture", "inventory.receive", "inventory.adjust")
     }
 }

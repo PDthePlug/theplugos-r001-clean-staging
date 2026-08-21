@@ -31,7 +31,8 @@ roles have no direct table privileges for any of them.
 | `hub_staff_sessions` | Native-terminal, expiry-bound staff continuation assertion | Native staff-session receiver |
 | `hub_events` | Immutable cloud replica of local committed events, deduplicated by event ID | Authenticated Hub sync receiver |
 | `inventory_receipts` / `inventory_receipt_lines` | Immutable Manager-counted stock intake header and product lines | Authenticated Hub sync receiver |
-| `inventory_movements` | Immutable reservation/release/receipt movement produced with each projected stock event | Authenticated Hub sync receiver |
+| `inventory_adjustments` / `inventory_adjustment_lines` | Immutable Manager-counted final-balance correction header and product lines | Authenticated Hub sync receiver |
+| `inventory_movements` | Immutable reservation/release/receipt/count-correction movement produced with each projected stock event | Authenticated Hub sync receiver |
 | `hub_rate_limit_windows` | Durable hashed source/device/staff throttles | Service-only receiver function |
 
 `devices` gains a signing public key, Hub TLS certificate fingerprint, and

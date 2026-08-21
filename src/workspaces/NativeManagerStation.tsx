@@ -2,6 +2,7 @@ import React, { useCallback, useEffect, useState } from 'react';
 import { ArrowLeft, Cloud, CloudOff, Landmark, RefreshCw, ShieldCheck, WifiOff, XCircle } from 'lucide-react';
 import { localHubRuntime } from '@plugos/core';
 import type { NativeHubCancellableOrder, NativeHubCommandRequest, NativeHubOperatorContext, NetworkHealth } from '@plugos/core';
+import { ManagerInventoryAdjustmentPanel, type ManagerInventoryAdjustmentRequest } from './ManagerInventoryAdjustmentPanel';
 import { ManagerInventoryReceiptPanel, type ManagerInventoryReceiptRequest } from './ManagerInventoryReceiptPanel';
 
 interface NativeManagerStationProps {
@@ -13,6 +14,7 @@ type PendingOpenShiftRequest = NativeHubCommandRequest;
 type PendingCloseShiftRequest = NativeHubCommandRequest;
 type PendingCancellationRequest = NativeHubCommandRequest & { orderId: string };
 type PendingInventoryReceiptRequest = ManagerInventoryReceiptRequest;
+type PendingInventoryAdjustmentRequest = ManagerInventoryAdjustmentRequest;
 type ManagerCancellationTask = NativeHubCancellableOrder | { id: string; status: 'RECOVERY' };
 
 interface ManagerCancellationQueueProps {
@@ -55,6 +57,14 @@ function parseReceiptQuantity(value: string, label: string): number {
   return Math.round((parsed + Number.EPSILON) * 1_000) / 1_000;
 }
 
+function parseCountedStockBalance(value: string, label: string): number {
+  const normalized = value.trim();
+  if (!/^\d+(?:\.\d{1,3})?$/.test(normalized)) throw new Error(`${label} must be a non-negative quantity with no more than three decimal places.`);
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed) || parsed < 0 || parsed > 99_999_999_999.999) throw new Error(`${label} is outside the supported local range.`);
+  return Math.round((parsed + Number.EPSILON) * 1_000) / 1_000;
+}
+
 function recoveredOpenShiftRequest(context: NativeHubOperatorContext): PendingOpenShiftRequest | null {
   return (context.recoverableNativeCommands || []).find((command) => command.type === 'shift.open') || null;
 }
@@ -88,6 +98,21 @@ function recoveredInventoryReceiptRequests(context: NativeHubOperatorContext): R
       throw new Error(`The native Hub has more than one unresolved receipt request for ${receiptId.slice(0, 8)}. Reconcile the measured native state before issuing another receipt.`);
     }
     requests[receiptId] = { ...command, receiptId };
+    return requests;
+  }, {});
+}
+
+function recoveredInventoryAdjustmentRequests(context: NativeHubOperatorContext): Record<string, PendingInventoryAdjustmentRequest> {
+  return (context.recoverableNativeCommands || []).reduce<Record<string, PendingInventoryAdjustmentRequest>>((requests, command) => {
+    const adjustmentId = command.payload.adjustmentId;
+    if (command.type !== 'inventory.adjust') return requests;
+    if (typeof adjustmentId !== 'string' || command.payload.reason !== 'COUNT_CORRECTION' || !Array.isArray(command.payload.items)) {
+      throw new Error('The native Hub retained an invalid count-correction retry request. Reconcile the measured native state before issuing another correction.');
+    }
+    if (requests[adjustmentId] && requests[adjustmentId].commandId !== command.commandId) {
+      throw new Error(`The native Hub has more than one unresolved count-correction request for ${adjustmentId.slice(0, 8)}. Reconcile the measured native state before issuing another correction.`);
+    }
+    requests[adjustmentId] = { ...command, adjustmentId };
     return requests;
   }, {});
 }
@@ -142,13 +167,18 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
   const [pendingCloseRequest, setPendingCloseRequest] = useState<PendingCloseShiftRequest | null>(null);
   const [pendingCancellationRequests, setPendingCancellationRequests] = useState<Record<string, PendingCancellationRequest>>({});
   const [pendingInventoryReceiptRequests, setPendingInventoryReceiptRequests] = useState<Record<string, PendingInventoryReceiptRequest>>({});
+  const [pendingInventoryAdjustmentRequests, setPendingInventoryAdjustmentRequests] = useState<Record<string, PendingInventoryAdjustmentRequest>>({});
   const [selectedInventoryProductId, setSelectedInventoryProductId] = useState('');
   const [inventoryReceiptQuantity, setInventoryReceiptQuantity] = useState('');
   const [draftInventoryReceiptLines, setDraftInventoryReceiptLines] = useState<Record<string, string>>({});
+  const [selectedInventoryAdjustmentProductId, setSelectedInventoryAdjustmentProductId] = useState('');
+  const [inventoryAdjustmentStockAfter, setInventoryAdjustmentStockAfter] = useState('');
+  const [draftInventoryAdjustmentLines, setDraftInventoryAdjustmentLines] = useState<Record<string, string>>({});
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
   const [cancellingOrderId, setCancellingOrderId] = useState<string | null>(null);
   const [receivingReceiptId, setReceivingReceiptId] = useState<string | null>(null);
+  const [adjustingInventoryId, setAdjustingInventoryId] = useState<string | null>(null);
   const [endingNativeSession, setEndingNativeSession] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
@@ -167,11 +197,18 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
     setPendingCloseRequest(recoveredClose);
     setPendingCancellationRequests(recoveredCancellationRequests(operator));
     setPendingInventoryReceiptRequests(recoveredInventoryReceiptRequests(operator));
+    setPendingInventoryAdjustmentRequests(recoveredInventoryAdjustmentRequests(operator));
     const inventoryProducts = operator.inventoryProducts || [];
     setSelectedInventoryProductId((current) => inventoryProducts.some((product) => product.id === current)
       ? current
       : inventoryProducts[0]?.id || '');
     setDraftInventoryReceiptLines((current) => Object.fromEntries(
+      Object.entries(current).filter(([productId]) => inventoryProducts.some((product) => product.id === productId)),
+    ));
+    setSelectedInventoryAdjustmentProductId((current) => inventoryProducts.some((product) => product.id === current)
+      ? current
+      : inventoryProducts[0]?.id || '');
+    setDraftInventoryAdjustmentLines((current) => Object.fromEntries(
       Object.entries(current).filter(([productId]) => inventoryProducts.some((product) => product.id === productId)),
     ));
     if (recoveredOpen && typeof recoveredOpen.payload.openingFloat === 'number') {
@@ -451,6 +488,93 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
     }
   };
 
+  const addInventoryAdjustmentLine = () => {
+    try {
+      const product = (context?.inventoryProducts || []).find((candidate) => candidate.id === selectedInventoryAdjustmentProductId);
+      if (!product) throw new Error('Choose an active signed product before adding a count-correction line.');
+      const stockAfter = parseCountedStockBalance(inventoryAdjustmentStockAfter, `The counted balance for ${product.name}`);
+      if (stockAfter === product.stockQuantity) {
+        throw new Error(`The counted balance for ${product.name} matches its current signed balance. A no-op count correction is not recorded.`);
+      }
+      setDraftInventoryAdjustmentLines((current) => ({ ...current, [product.id]: stockAfter.toFixed(3) }));
+      setInventoryAdjustmentStockAfter('');
+      setMessage(null);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The count-correction line is invalid.');
+    }
+  };
+
+  const commitInventoryAdjustment = async (request: PendingInventoryAdjustmentRequest) => {
+    setAdjustingInventoryId(request.adjustmentId);
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      const receipt = await localHubRuntime.submitNativeCommandRequest(request);
+      setPendingInventoryAdjustmentRequests((current) => {
+        const next = { ...current };
+        delete next[request.adjustmentId];
+        return next;
+      });
+      setDraftInventoryAdjustmentLines({});
+      await refreshNativeState();
+      setMessage(
+        receipt.outcome === 'DUPLICATE'
+          ? `The exact count correction ${request.adjustmentId.slice(0, 8)} was already committed locally; no second stock movement was written.`
+          : `Count correction ${request.adjustmentId.slice(0, 8)} was committed locally. ${receipt.outboxIds.length} event(s) remain queued until cloud acknowledgement if the link is unavailable.`,
+      );
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The native Hub could not record this count correction. The same request can be retried safely.');
+    } finally {
+      setAdjustingInventoryId(null);
+      setSubmitting(false);
+    }
+  };
+
+  const submitInventoryAdjustment = async () => {
+    if (Object.keys(pendingInventoryAdjustmentRequests).length > 0) {
+      setMessage('Resolve the preserved native count-correction request before creating another. Retry it exactly, or use the native-confirmed abandonment path.');
+      return;
+    }
+    try {
+      const items = Object.entries(draftInventoryAdjustmentLines).map(([productId, stockAfter]) => ({
+        productId,
+        stockAfter: parseCountedStockBalance(stockAfter, 'A counted stock balance'),
+      }));
+      if (items.length === 0) throw new Error('Add at least one measured stock balance before recording a count correction.');
+      const adjustmentId = createRequestUuid();
+      const request: PendingInventoryAdjustmentRequest = {
+        commandId: createRequestUuid(),
+        adjustmentId,
+        type: 'inventory.adjust',
+        payload: { adjustmentId, reason: 'COUNT_CORRECTION', items },
+      };
+      setPendingInventoryAdjustmentRequests((current) => ({ ...current, [request.adjustmentId]: request }));
+      await commitInventoryAdjustment(request);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The count correction is invalid.');
+    }
+  };
+
+  const abandonPendingInventoryAdjustment = async (adjustmentId: string) => {
+    const request = pendingInventoryAdjustmentRequests[adjustmentId];
+    if (!request) return;
+    setAdjustingInventoryId(adjustmentId);
+    setSubmitting(true);
+    setMessage(null);
+    try {
+      const discarded = await localHubRuntime.discardNativeCommandRequest(request.commandId);
+      await refreshNativeState();
+      setMessage(discarded
+        ? `The native Hub confirmed that count correction ${adjustmentId.slice(0, 8)} had no receipt and abandoned only its retry reservation. No correction, stock movement, event, audit fact, or outbox record was removed.`
+        : 'That count-correction request no longer has an uncommitted native reservation. The measured Hub state was refreshed.');
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The native Hub could not safely abandon this count-correction request.');
+    } finally {
+      setAdjustingInventoryId(null);
+      setSubmitting(false);
+    }
+  };
+
   const endNativeSession = async () => {
     setEndingNativeSession(true);
     setMessage(null);
@@ -537,6 +661,30 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
             if (request) void commitInventoryReceipt(request);
           }}
           onAbandon={(receiptId) => { void abandonPendingInventoryReceipt(receiptId); }}
+        />
+
+        <ManagerInventoryAdjustmentPanel
+          products={inventoryProducts}
+          selectedProductId={selectedInventoryAdjustmentProductId}
+          stockAfter={inventoryAdjustmentStockAfter}
+          draftLines={draftInventoryAdjustmentLines}
+          pendingRequests={pendingInventoryAdjustmentRequests}
+          adjustingAdjustmentId={adjustingInventoryId}
+          submitting={submitting}
+          onSelectedProductChange={setSelectedInventoryAdjustmentProductId}
+          onStockAfterChange={setInventoryAdjustmentStockAfter}
+          onAddLine={addInventoryAdjustmentLine}
+          onRemoveLine={(productId) => setDraftInventoryAdjustmentLines((current) => {
+            const next = { ...current };
+            delete next[productId];
+            return next;
+          })}
+          onSubmit={() => { void submitInventoryAdjustment(); }}
+          onRetry={(adjustmentId) => {
+            const request = pendingInventoryAdjustmentRequests[adjustmentId];
+            if (request) void commitInventoryAdjustment(request);
+          }}
+          onAbandon={(adjustmentId) => { void abandonPendingInventoryAdjustment(adjustmentId); }}
         />
 
         {activeShift ? (

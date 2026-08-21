@@ -19,6 +19,7 @@ class HubCommandRouter(private val database: HubDatabase) {
             "order.status.transition" -> transitionOrder(command, context)
             "payment.capture" -> captureCashPayment(command, context)
             "inventory.receive" -> receiveInventory(command, context)
+            "inventory.adjust" -> adjustInventory(command, context)
             else -> throw HubCommandRejectedException("Command ${command.type} is not implemented by this Hub release.")
         }
     }
@@ -413,6 +414,81 @@ class HubCommandRouter(private val database: HubDatabase) {
         )
     }
 
+    /** A count correction records a Manager's measured final balance. It is
+     * deliberately distinct from an inbound receipt: it cannot assert a
+     * supplier, purchase order, cost, cash, approval, or stock-loss fact. */
+    private fun adjustInventory(command: OperationalCommand, context: VerifiedCommandContext): RoutedCommand {
+        command.payload.requireExactFields(setOf("adjustmentId", "reason", "items"), "Inventory count correction")
+        val adjustmentId = command.payload.requiredUuid("adjustmentId", "Inventory count-correction ID")
+        if (database.projection("inventory_adjustments", adjustmentId) != null) {
+            throw HubCommandRejectedException("An inventory count correction with this adjustmentId already exists on this Hub.")
+        }
+        if (command.payload.optString("reason", "").trim() != "COUNT_CORRECTION") {
+            throw HubCommandRejectedException("Inventory count correction requires the supported COUNT_CORRECTION reason.")
+        }
+        val items = command.payload.optJSONArray("items")
+            ?: throw HubCommandRejectedException("Inventory count correction requires line items.")
+        if (items.length() == 0 || items.length() > MAX_INVENTORY_ADJUSTMENT_LINES) {
+            throw HubCommandRejectedException("Inventory count correction has an unsupported line-item count.")
+        }
+
+        val seenProductIds = mutableSetOf<String>()
+        val normalizedItems = org.json.JSONArray()
+        val stockProjections = mutableListOf<ProjectionWrite>()
+        for (index in 0 until items.length()) {
+            val item = items.optJSONObject(index)
+                ?: throw HubCommandRejectedException("Every inventory count-correction line must be an object.")
+            item.requireExactFields(setOf("productId", "stockAfter"), "Every inventory count-correction line")
+            val productId = requireUuid(item.optString("productId", "").trim(), "Every inventory count-correction line needs a UUID productId.")
+            if (!seenProductIds.add(productId)) {
+                throw HubCommandRejectedException("An inventory count correction cannot contain the same product more than once.")
+            }
+            val stockAfter = item.optDouble("stockAfter", Double.NaN)
+            if (!stockAfter.isFinite() || stockAfter < 0.0 || stockAfter > MAX_STOCK_QUANTITY || !hasQuantityPrecision(stockAfter)) {
+                throw HubCommandRejectedException("Inventory count-correction balance must be a supported non-negative number with at most three decimal places.")
+            }
+            val catalogProduct = database.projection("catalog_products", productId)
+                ?: throw HubCommandRejectedException("Product $productId is not present in the Hub catalog snapshot.")
+            if (catalogProduct.optString("status", "").trim() != "ACTIVE") {
+                throw HubCommandRejectedException("Product $productId is not active for a new inventory count correction.")
+            }
+            val stockBefore = catalogProduct.optDouble("stock", Double.NaN)
+            if (!stockBefore.isFinite() || stockBefore < 0.0 || stockBefore > MAX_STOCK_QUANTITY || !hasQuantityPrecision(stockBefore)) {
+                throw HubCommandRejectedException("Product $productId has an invalid signed Hub stock balance.")
+            }
+            val quantityDelta = roundQuantity(stockAfter - stockBefore)
+            if (!quantityDelta.isFinite() || quantityDelta == 0.0 || kotlin.math.abs(quantityDelta) > MAX_STOCK_QUANTITY) {
+                throw HubCommandRejectedException("Inventory count correction must change the measured stock balance.")
+            }
+            normalizedItems.put(
+                JSONObject()
+                    .put("productId", productId)
+                    .put("stockBefore", stockBefore)
+                    .put("stockAfter", stockAfter)
+                    .put("quantityDelta", quantityDelta)
+            )
+            stockProjections += ProjectionWrite(
+                "catalog_products",
+                productId,
+                JSONObject(catalogProduct.toString()).put("stock", stockAfter)
+            )
+        }
+
+        val eventPayload = JSONObject()
+            .put("id", adjustmentId)
+            .put("adjustmentId", adjustmentId)
+            .put("status", "ADJUSTED")
+            .put("reason", "COUNT_CORRECTION")
+            .put("items", normalizedItems)
+        val adjustmentProjection = JSONObject(eventPayload.toString())
+            .put("businessId", context.businessId)
+            .put("branchId", context.branchId)
+        return RoutedCommand(
+            events = listOf(HubEventDraft(adjustmentId, "inventory_adjustment", "INVENTORY_ADJUSTED", eventPayload)),
+            projections = listOf(ProjectionWrite("inventory_adjustments", adjustmentId, adjustmentProjection)) + stockProjections
+        )
+    }
+
     private fun JSONObject.requiredOrderId(): String {
         val value = optString("orderId", optString("id", "")).trim()
         return requireUuid(value, "Order command requires orderId.")
@@ -656,6 +732,7 @@ class HubCommandRouter(private val database: HubDatabase) {
     private companion object {
         const val MAX_ORDER_LINE_ITEMS = 100
         const val MAX_INVENTORY_RECEIPT_LINES = 100
+        const val MAX_INVENTORY_ADJUSTMENT_LINES = 100
         const val MAX_LINE_QUANTITY = 1_000_000.0
         const val MAX_INVENTORY_RECEIPT_QUANTITY = 99_999_999_999.999
         const val MAX_ORDER_TOTAL = 999_999_999.99

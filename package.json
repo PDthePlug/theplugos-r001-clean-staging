@@ -36,10 +36,11 @@
     "test:r009-shift-close": "node scripts/test-r009-cash-shift-close-contract.mjs",
     "test:r010-pending-cancellation": "node scripts/test-r010-pending-order-cancellation-contract.mjs",
     "test:r011-inventory-receipt": "node scripts/test-r011-inventory-receipt-contract.mjs",
+    "test:r012-inventory-correction": "node scripts/test-r012-inventory-count-correction-contract.mjs",
     "test:browser-authority": "node scripts/test-browser-authority-boundary.mjs",
     "test:android-host": "node scripts/test-android-host-contract.mjs",
     "test:release-truth": "node scripts/test-release-truth.mjs",
-    "test:all": "npm run test:r001-inspector && npm run test:r002 && npm run test:hub-protocol && npm run test:r003-local-hub && npm run test:r004-order-authority && npm run test:r005-cash-capture && npm run test:r006-native-kitchen && npm run test:r007-native-session && npm run test:r008-cash-collection && npm run test:r009-shift-close && npm run test:r010-pending-cancellation && npm run test:r011-inventory-receipt && npm run test:browser-authority && npm run test:android-host && npm run test:release-truth && npm test"
+    "test:all": "npm run test:r001-inspector && npm run test:r002 && npm run test:hub-protocol && npm run test:r003-local-hub && npm run test:r004-order-authority && npm run test:r005-cash-capture && npm run test:r006-native-kitchen && npm run test:r007-native-session && npm run test:r008-cash-collection && npm run test:r009-shift-close && npm run test:r010-pending-cancellation && npm run test:r011-inventory-receipt && npm run test:r012-inventory-correction && npm run test:browser-authority && npm run test:android-host && npm run test:release-truth && npm test"
   },
   "dependencies": {
     "@capacitor/android": "8.5.0",
