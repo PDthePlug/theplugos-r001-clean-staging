@@ -92,10 +92,8 @@ export class PlugOS {
 
   public get network() {
     return {
-      setOnlineStatus: (isOnline: boolean) => {
-        syncService.setNetworkStatus(isOnline);
-        localHubRuntime.toggleCloudStatus(isOnline);
-      }
+      getStatus: () => localHubRuntime.getNetworkHealth(),
+      refresh: () => localHubRuntime.refresh()
     };
   }
 
@@ -107,9 +105,10 @@ export class PlugOS {
       getTransportMetrics: () => localHubRuntime.getTransportMetrics(),
       getOutbox: () => localHubRuntime.getOutbox(),
       getInbox: () => localHubRuntime.getInbox(),
-      registerDevice: (device: any) => localHubRuntime.registerDevice(device),
+      registerDevice: (device: any, options: { branchId: string; branchName?: string }) => localHubRuntime.registerDevice(device, options),
       revokeDevice: (id: string) => localHubRuntime.revokeDevice(id),
-      runSimulation: (id: string) => localHubRuntime.runFailureSimulation(id),
+      discoverDevices: () => localHubRuntime.triggerSubnetScan(),
+      runFailureSimulation: (id: string) => localHubRuntime.runFailureSimulation(id),
       subscribe: (listener: (state: any) => void) => localHubRuntime.subscribe(listener)
     };
   }
@@ -120,29 +119,16 @@ export class PlugOS {
     };
   }
 
-  // DIRECTIVE R001: TENANT-SCOPE LOCAL CACHE FOUNDATION
-  private getTenantNamespace(namespace: string): string {
-    const tenantCollections = ['staff', 'catalog', 'orders', 'branches', 'businesses', 'config', 'suppliers'];
-    if (tenantCollections.includes(namespace)) {
-      try {
-        const storedAuth = localStorage.getItem('plugos_business_auth');
-        if (storedAuth) {
-          const parsed = JSON.parse(storedAuth);
-          if (parsed.businessId) {
-            return `tenant:${parsed.businessId}:${namespace}`;
-          }
-        }
-      } catch (e) {}
-    }
-    return namespace;
-  }
-
   public get storage() {
     return {
-      get: (namespace: string, key: string) => storageEngine.get(this.getTenantNamespace(namespace), key),
-      getAll: (namespace: string) => storageEngine.getAll(this.getTenantNamespace(namespace)),
-      set: (namespace: string, key: string, value: any) => storageEngine.set(this.getTenantNamespace(namespace), key, value),
-      remove: (namespace: string, key: string) => storageEngine.remove(this.getTenantNamespace(namespace), key)
+      // Browser localStorage is never an authority namespace. Native Hub
+      // collections are scoped by the verified authorization bundle in
+      // SQLCipher; callers that need browser cache must provide their own
+      // non-operational namespace explicitly.
+      get: (namespace: string, key: string) => storageEngine.get(namespace, key),
+      getAll: (namespace: string) => storageEngine.getAll(namespace),
+      set: (namespace: string, key: string, value: any) => storageEngine.set(namespace, key, value),
+      remove: (namespace: string, key: string) => storageEngine.remove(namespace, key)
     };
   }
 
@@ -158,4 +144,3 @@ export class PlugOS {
 }
 
 export const sdk = new PlugOS();
-

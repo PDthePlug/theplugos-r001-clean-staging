@@ -25,7 +25,6 @@ export const SyncDiagnosticsModal: React.FC<SyncDiagnosticsModalProps> = ({ onCl
   const [status, setStatus] = useState<SyncStatus>(syncService.getStatus());
   const [realtimeStatus, setRealtimeStatus] = useState<string>(syncService.getRealtimeStatus());
   const [logs, setLogs] = useState<SyncLogEntry[]>(syncService.getLogs());
-  const [deviceId] = useState<string>(localStorage.getItem('plugos_device_id') || 'dev-unknown');
   const [isRefreshing, setIsRefreshing] = useState(false);
 
   useEffect(() => {
@@ -41,11 +40,16 @@ export const SyncDiagnosticsModal: React.FC<SyncDiagnosticsModalProps> = ({ onCl
 
   const handleManualSync = async () => {
     setIsRefreshing(true);
-    await syncService.fetchAndSyncOrders();
-    await syncService.fetchAndSyncProducts();
-    await syncService.fetchAndSyncStaff();
-    setLogs(syncService.getLogs());
-    setIsRefreshing(false);
+    try {
+      await Promise.all([
+        syncService.fetchAndSyncOrders(),
+        syncService.fetchAndSyncProducts(),
+        syncService.fetchAndSyncStaff(),
+      ]);
+      setLogs(syncService.getLogs());
+    } finally {
+      setIsRefreshing(false);
+    }
   };
 
   const getStatusBadge = (s: SyncStatus) => {
@@ -53,19 +57,19 @@ export const SyncDiagnosticsModal: React.FC<SyncDiagnosticsModalProps> = ({ onCl
       case 'SYNCED':
         return (
           <span className="bg-emerald-500/10 text-emerald-400 border border-emerald-500/30 px-3 py-1 rounded-full text-xs font-mono font-bold flex items-center gap-1.5">
-            <CheckCircle2 className="w-3.5 h-3.5" /> SYNCED
+            <CheckCircle2 className="w-3.5 h-3.5" /> REPLICA READ
           </span>
         );
       case 'SYNCING':
         return (
           <span className="bg-amber-500/10 text-amber-400 border border-amber-500/30 px-3 py-1 rounded-full text-xs font-mono font-bold flex items-center gap-1.5 animate-pulse">
-            <RefreshCw className="w-3.5 h-3.5 animate-spin" /> SYNCING...
+            <RefreshCw className="w-3.5 h-3.5 animate-spin" /> FETCHING...
           </span>
         );
       case 'OFFLINE':
         return (
           <span className="bg-slate-800 text-slate-400 border border-slate-700 px-3 py-1 rounded-full text-xs font-mono font-bold flex items-center gap-1.5">
-            <WifiOff className="w-3.5 h-3.5" /> OFFLINE
+            <WifiOff className="w-3.5 h-3.5" /> NO CLOUD READ
           </span>
         );
       case 'ERROR':
@@ -89,10 +93,10 @@ export const SyncDiagnosticsModal: React.FC<SyncDiagnosticsModalProps> = ({ onCl
             </div>
             <div>
               <h3 className="text-base font-bold text-white flex items-center gap-2">
-                Sync & recovery details
+                Cloud replica diagnostics
               </h3>
               <p className="text-xs text-slate-400">
-                See what this device has saved and what still needs to be shared.
+                Read-only cloud data only. Local Hub receipts and delivery acknowledgements are not available in a browser.
               </p>
             </div>
           </div>
@@ -107,19 +111,19 @@ export const SyncDiagnosticsModal: React.FC<SyncDiagnosticsModalProps> = ({ onCl
         {/* Status Metrics Bar */}
         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 bg-slate-950 p-4 border border-slate-800 rounded-2xl">
           <div>
-            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Sync Status</span>
+            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Cloud read status</span>
             <div className="mt-1">{getStatusBadge(status)}</div>
           </div>
 
           <div>
-            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Device ID</span>
+            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Runtime</span>
             <span className="text-xs font-mono font-bold text-amber-400 truncate block mt-1">
-              {deviceId}
+              Browser read-only shell
             </span>
           </div>
 
           <div>
-            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Realtime Stream</span>
+            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Cloud channel</span>
             <span className={`text-xs font-mono font-bold block mt-1 flex items-center gap-1 ${
               realtimeStatus === 'SUBSCRIBED' ? 'text-emerald-400' :
               realtimeStatus === 'CONNECTING' ? 'text-amber-400 animate-pulse' :
@@ -130,7 +134,7 @@ export const SyncDiagnosticsModal: React.FC<SyncDiagnosticsModalProps> = ({ onCl
           </div>
 
           <div>
-            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Sync Logs</span>
+            <span className="text-[10px] text-slate-400 uppercase font-bold tracking-wider block">Read log</span>
             <span className="text-xs font-mono font-bold text-slate-200 block mt-1">
               {logs.length} Operations
             </span>
@@ -140,14 +144,14 @@ export const SyncDiagnosticsModal: React.FC<SyncDiagnosticsModalProps> = ({ onCl
         {/* Action button */}
         <div className="flex justify-between items-center">
           <span className="text-xs font-bold text-slate-400 flex items-center gap-1">
-            <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" /> Recent movements
+            <Radio className="w-3.5 h-3.5 text-emerald-400 animate-pulse" /> Recent cloud reads
           </span>
           <button
             onClick={handleManualSync}
             disabled={isRefreshing}
             className="px-3.5 py-1.5 bg-amber-500 hover:bg-amber-400 text-slate-950 font-black text-xs rounded-xl flex items-center gap-1.5 transition cursor-pointer"
           >
-            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} /> Sync now
+            <RefreshCw className={`w-3.5 h-3.5 ${isRefreshing ? 'animate-spin' : ''}`} /> Refresh cloud replica
           </button>
         </div>
 
@@ -155,7 +159,7 @@ export const SyncDiagnosticsModal: React.FC<SyncDiagnosticsModalProps> = ({ onCl
         <div className="flex-1 overflow-y-auto space-y-2 pr-1 min-h-[220px]">
           {logs.length === 0 ? (
             <div className="p-8 text-center text-slate-500 text-xs font-mono border border-slate-800/60 rounded-2xl bg-slate-950/40">
-              No sync events logged yet in current session. Perform an order or product action to observe live propagation.
+              No cloud reads logged in this browser session. A refresh may read the owner-authorized replica; it cannot create or deliver an operational event.
             </div>
           ) : (
             logs.map(log => (
@@ -195,7 +199,7 @@ export const SyncDiagnosticsModal: React.FC<SyncDiagnosticsModalProps> = ({ onCl
         {/* Footer */}
         <div className="border-t border-slate-800 pt-3 flex items-center justify-between text-[11px] text-slate-500">
           <span>Current business only</span>
-          <span>Local copy + secure cloud backup</span>
+          <span>No Hub ledger or delivery acknowledgement in browser</span>
         </div>
 
       </div>

@@ -1,18 +1,7 @@
+/**
+ * Browser-generated device IDs are not an identity or proof of possession.
+ * Native Android Keystore enrollment replaces this compatibility entry point.
+ */
 export function getOrCreateDeviceId(): string {
-  if (typeof window === 'undefined') {
-    return 'dev-server';
-  }
-  let deviceId = localStorage.getItem('plugos_device_id');
-  if (!deviceId || !deviceId.trim() || deviceId === 'null' || deviceId === 'undefined') {
-    const uuid = typeof crypto !== 'undefined' && crypto.randomUUID 
-      ? crypto.randomUUID() 
-      : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
-          const r = (crypto.getRandomValues(new Uint8Array(1))[0] % 16);
-          return (c === 'x' ? r : (r & 0x3 | 0x8)).toString(16);
-        });
-    deviceId = `dev-${uuid}`;
-    localStorage.setItem('plugos_device_id', deviceId);
-  }
-  return deviceId;
+  throw new Error('Browser device identity is retired. Enroll the Android-native Cashier Hub instead.');
 }
-

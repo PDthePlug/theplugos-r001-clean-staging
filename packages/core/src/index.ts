@@ -6,5 +6,6 @@ export * from './events';
 export * from './state';
 export * from './config';
 export * from './runtime';
+export * from './operations';
 export * from './security';
 export * from './services';

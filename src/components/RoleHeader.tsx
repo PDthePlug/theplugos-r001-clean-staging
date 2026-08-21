@@ -13,11 +13,17 @@ import {
   WifiOff,
   X,
 } from 'lucide-react';
+import type { CloudLinkState, NativeHubAvailability } from '@plugos/core';
 
 interface RoleHeaderProps {
   session: UserSession;
-  isOnline: boolean;
-  onToggleOnline: () => void;
+  /** @deprecated Cloud state is now provided by the native Hub fields below. */
+  isOnline?: boolean;
+  /** @deprecated Browser controls cannot change operational network state. */
+  onToggleOnline?: () => void;
+  hubAvailability?: NativeHubAvailability;
+  cloudStatus?: CloudLinkState;
+  hubMessage?: string;
   outboxCount: number;
   onLockSession: () => void;
   onLogout?: () => void;
@@ -43,21 +49,31 @@ const ShellMark = () => (
 
 export const RoleHeader: React.FC<RoleHeaderProps> = ({
   session,
-  isOnline,
-  onToggleOnline,
+  hubAvailability = 'UNAVAILABLE',
+  cloudStatus = 'UNKNOWN',
+  hubMessage,
   outboxCount,
   onLockSession,
   onLogout,
   onOpenHubInspector,
   onOpenPairingWizard,
   onOpenSyncDiagnostics,
-  activeShiftDuration = '02h 45m',
+  activeShiftDuration,
 }) => {
   const [utilitiesOpen, setUtilitiesOpen] = useState(false);
-  const canPairDevice =
-    Boolean(onOpenPairingWizard) &&
-    (session.role === 'OWNER' || session.role === 'MANAGER') &&
-    Boolean(session.sessionToken);
+  // A ready local runtime is not itself permission to enroll a peer. Keep the
+  // old trigger hidden until the staged signed-bundle enrollment receiver is
+  // available through the native bridge.
+  const canPairDevice = false;
+
+  const hubReady = hubAvailability === 'READY';
+  const cloudCopy = !hubReady
+    ? { small: 'Native Hub required', strong: 'Browser workspace only', tone: 'is-local', icon: <WifiOff aria-hidden="true" /> }
+    : cloudStatus === 'CONNECTED'
+      ? { small: 'Cloud replica reachable', strong: 'Hub + cloud', tone: 'is-online', icon: <Wifi aria-hidden="true" /> }
+      : cloudStatus === 'DISCONNECTED'
+        ? { small: 'Cloud replica unavailable', strong: 'Hub continues locally', tone: 'is-local', icon: <WifiOff aria-hidden="true" /> }
+        : { small: 'Cloud status not reported', strong: 'Hub status unknown', tone: 'is-local', icon: <WifiOff aria-hidden="true" /> };
 
   const runUtility = (action?: () => void) => {
     setUtilitiesOpen(false);
@@ -87,18 +103,13 @@ export const RoleHeader: React.FC<RoleHeaderProps> = ({
         </div>
 
         <div className="plug-shell-status" aria-label="Operating status">
-          <button
-            className={`plug-shell-state ${isOnline ? 'is-online' : 'is-local'}`}
-            type="button"
-            onClick={onToggleOnline}
-            aria-label={isOnline ? 'Switch cloud sync offline' : 'Reconnect cloud sync'}
-          >
-            {isOnline ? <Wifi aria-hidden="true" /> : <WifiOff aria-hidden="true" />}
+          <div className={`plug-shell-state ${cloudCopy.tone}`} title={hubMessage}>
+            {cloudCopy.icon}
             <span>
-              <small>{isOnline ? 'Cloud connected' : 'Internet unavailable'}</small>
-              <strong>{isOnline ? 'Live + local' : 'Local mode active'}</strong>
+              <small>{cloudCopy.small}</small>
+              <strong>{cloudCopy.strong}</strong>
             </span>
-          </button>
+          </div>
 
           {onOpenSyncDiagnostics && (
             <button
@@ -110,7 +121,7 @@ export const RoleHeader: React.FC<RoleHeaderProps> = ({
               <Activity aria-hidden="true" />
               <span>
                 <small>Event movement</small>
-                <strong>{outboxCount > 0 ? `${outboxCount} safely queued` : 'Everything synced'}</strong>
+                <strong>{hubReady ? (outboxCount > 0 ? `${outboxCount} awaiting acknowledgement` : 'No pending Hub events') : 'No Hub ledger attached'}</strong>
               </span>
             </button>
           )}
@@ -119,7 +130,7 @@ export const RoleHeader: React.FC<RoleHeaderProps> = ({
             <Clock3 aria-hidden="true" />
             <span>
               <small>Current shift</small>
-              <strong>{session.shiftId ? `${activeShiftDuration} active` : 'Not opened'}</strong>
+              <strong>{session.shiftId ? (activeShiftDuration ? `${activeShiftDuration} active` : 'Shift open') : 'Not opened'}</strong>
             </span>
           </div>
         </div>

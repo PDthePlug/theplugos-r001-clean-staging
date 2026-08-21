@@ -1,0 +1,318 @@
+import type { KernelEvent } from '../events';
+
+export type HubDeviceRole =
+  | 'CASHIER'
+  | 'KITCHEN_STAFF'
+  | 'MANAGER'
+  | 'OWNER'
+  | 'ADMINISTRATOR'
+  | 'PRINTER'
+  | 'DISPLAY';
+
+export interface DeviceNode {
+  id: string;
+  name: string;
+  role: HubDeviceRole;
+  ipAddress?: string;
+  status: 'ACTIVE' | 'DEGRADED' | 'OFFLINE' | 'REVOKED';
+  lastHeartbeat?: string;
+  latencyMs?: number | null;
+  certFingerprint?: string;
+  queuedEvents: number;
+  connectionType: 'LAN_WIFI' | 'BLE_FALLBACK' | 'MESH_P2P' | 'ETHERNET' | 'UNAVAILABLE';
+  businessId?: string;
+  branchId?: string;
+  isHub?: boolean;
+}
+
+export type NativeHubAvailability = 'READY' | 'UNAVAILABLE' | 'ERROR';
+export type CloudLinkState = 'CONNECTED' | 'DISCONNECTED' | 'UNKNOWN';
+
+export interface NetworkHealth {
+  mode: 'LOCAL_HUB_PRIMARY' | 'STANDALONE_FALLBACK' | 'CLOUD_SYNCHRONIZED' | 'NATIVE_HUB_REQUIRED';
+  availability: NativeHubAvailability;
+  localPeerCount: number;
+  packetLossRate: number | null;
+  latencyMs: number | null;
+  outboxDepth: number;
+  inboxDepth: number;
+  lastSyncTimestamp: string | null;
+  cloudConnected: boolean;
+  cloudStatus: CloudLinkState;
+  activeTransport: 'LAN_WIFI' | 'BLE' | 'P2P_MESH' | 'ETHERNET' | 'UNAVAILABLE';
+  message: string;
+}
+
+export interface FailureScenario {
+  id: string;
+  title: string;
+  description: string;
+  impact: string;
+  recoveryMechanism: string;
+  status: 'IDLE' | 'SIMULATING' | 'RECOVERING' | 'RESOLVED';
+}
+
+export interface SecondaryTransportMetric {
+  name: string;
+  type: 'LAN_WIFI' | 'BLE' | 'WIFI_DIRECT' | 'P2P_MESH' | 'USB_ETHERNET';
+  bandwidthMbps: number;
+  maxLatencyMs: number;
+  maxDevices: number;
+  batteryImpact: 'LOW' | 'MEDIUM' | 'HIGH';
+  rangeMeters: number;
+  townshipSuitabilityScore: number;
+  status: 'PRIMARY' | 'EVALUATED_FALLBACK' | 'EXPERIMENTAL';
+  recommendation: string;
+}
+
+export interface HubSnapshot {
+  devices: DeviceNode[];
+  networkHealth: NetworkHealth;
+  failures: FailureScenario[];
+  transportMetrics: SecondaryTransportMetric[];
+  outbox: KernelEvent[];
+  inbox: KernelEvent[];
+}
+
+export interface DeviceRegistrationRequest {
+  name: string;
+  role: HubDeviceRole;
+  branchId: string;
+  branchName?: string;
+  connectionType?: DeviceNode['connectionType'];
+}
+
+/** The web layer supplies only task input. Native code supplies the device,
+ * active staff session, timestamp, sequence, and Keystore signature. */
+export interface NativeHubCommandRequest {
+  commandId: string;
+  type: 'order.create' | 'order.status.transition';
+  payload: Record<string, unknown>;
+}
+
+/** Deliberately excludes staffSessionId, deviceId, sequence, signature, and
+ * any other reusable authority fact. */
+export interface NativeHubCommandReceipt {
+  commandId: string;
+  outcome: 'APPLIED' | 'DUPLICATE';
+  committedAt: string;
+  eventIds: string[];
+  outboxIds: string[];
+}
+
+export interface NativeHubCatalogProduct {
+  id: string;
+  name: string;
+  category: string;
+  price: number;
+  stockQuantity: number;
+  unit: string;
+  status: 'ACTIVE';
+}
+
+/** Non-secret signed configuration data for a native station UI. */
+export interface NativeHubOperatorContext {
+  staffName: string;
+  role: 'CASHIER' | 'KITCHEN_STAFF' | 'MANAGER' | 'OWNER' | 'ADMINISTRATOR';
+  vat: { enabled: boolean; rate: number };
+  catalogProducts: NativeHubCatalogProduct[];
+}
+
+export class NativeHubCapabilityError extends Error {
+  public readonly code = 'NATIVE_HUB_REQUIRED';
+
+  constructor(message = 'This operation requires the authenticated Android-native Cashier Hub.') {
+    super(message);
+    this.name = 'NativeHubCapabilityError';
+  }
+}
+
+export interface NativeHubBridge {
+  getSnapshot(): Promise<HubSnapshot>;
+  refresh(): Promise<HubSnapshot>;
+  discoverDevices(): Promise<DeviceNode[]>;
+  registerDevice(request: DeviceRegistrationRequest): Promise<DeviceNode>;
+  revokeDevice(deviceId: string): Promise<void>;
+  openNativeEnrollment(): Promise<void>;
+  openNativeStaffSignIn(): Promise<void>;
+  getNativeOperatorContext(): Promise<NativeHubOperatorContext>;
+  submitNativeCommandRequest(request: NativeHubCommandRequest): Promise<NativeHubCommandReceipt>;
+  subscribe(listener: (snapshot: HubSnapshot) => void): Promise<() => void | Promise<void>>;
+}
+
+export const unavailableHubSnapshot = (message: string): HubSnapshot => ({
+  devices: [],
+  networkHealth: {
+    mode: 'NATIVE_HUB_REQUIRED',
+    availability: 'UNAVAILABLE',
+    localPeerCount: 0,
+    packetLossRate: null,
+    latencyMs: null,
+    outboxDepth: 0,
+    inboxDepth: 0,
+    lastSyncTimestamp: null,
+    cloudConnected: false,
+    cloudStatus: 'UNKNOWN',
+    activeTransport: 'UNAVAILABLE',
+    message
+  },
+  failures: [],
+  transportMetrics: [],
+  outbox: [],
+  inbox: []
+});
+
+type CapacitorListenerHandle = { remove: () => void | Promise<void> };
+
+interface CapacitorLocalHubPlugin {
+  getSnapshot: () => Promise<HubSnapshot>;
+  refresh?: () => Promise<HubSnapshot>;
+  discoverDevices: () => Promise<{ devices: DeviceNode[] }>;
+  registerDevice: (request: DeviceRegistrationRequest) => Promise<{ device: DeviceNode }>;
+  revokeDevice: (request: { deviceId: string }) => Promise<void>;
+  openNativeEnrollment?: () => Promise<{ opened: boolean }>;
+  openNativeStaffSignIn?: () => Promise<{ opened: boolean }>;
+  getNativeOperatorContext?: () => Promise<NativeHubOperatorContext>;
+  submitNativeCommandRequest?: (request: NativeHubCommandRequest) => Promise<NativeHubCommandReceipt>;
+  addListener?: (eventName: 'hubStateChanged', listener: (snapshot: HubSnapshot) => void) => Promise<CapacitorListenerHandle> | CapacitorListenerHandle;
+}
+
+function getCapacitorPlugin(): CapacitorLocalHubPlugin | null {
+  const runtime = globalThis as typeof globalThis & {
+    Capacitor?: { Plugins?: Record<string, unknown> };
+  };
+  const candidate = runtime.Capacitor?.Plugins?.ThePlugOSLocalHub as Partial<CapacitorLocalHubPlugin> | undefined;
+
+  if (!candidate || typeof candidate.getSnapshot !== 'function' || typeof candidate.discoverDevices !== 'function' ||
+    typeof candidate.registerDevice !== 'function' || typeof candidate.revokeDevice !== 'function') {
+    return null;
+  }
+
+  return candidate as CapacitorLocalHubPlugin;
+}
+
+class UnavailableNativeHubBridge implements NativeHubBridge {
+  private readonly snapshot: HubSnapshot;
+
+  constructor() {
+    this.snapshot = unavailableHubSnapshot(
+      'No authenticated Android-native Cashier Hub is attached to this application build. Browser tabs cannot act as a local operational hub.'
+    );
+  }
+
+  async getSnapshot(): Promise<HubSnapshot> {
+    return this.snapshot;
+  }
+
+  async refresh(): Promise<HubSnapshot> {
+    return this.snapshot;
+  }
+
+  async discoverDevices(): Promise<DeviceNode[]> {
+    throw new NativeHubCapabilityError();
+  }
+
+  async registerDevice(_: DeviceRegistrationRequest): Promise<DeviceNode> {
+    throw new NativeHubCapabilityError();
+  }
+
+  async revokeDevice(_: string): Promise<void> {
+    throw new NativeHubCapabilityError();
+  }
+
+  async openNativeEnrollment(): Promise<void> {
+    throw new NativeHubCapabilityError('Native Cashier Hub enrollment is unavailable in this browser build.');
+  }
+
+  async openNativeStaffSignIn(): Promise<void> {
+    throw new NativeHubCapabilityError('Native staff sign-in is unavailable in this browser build.');
+  }
+
+  async getNativeOperatorContext(): Promise<NativeHubOperatorContext> {
+    throw new NativeHubCapabilityError('Native operator context is unavailable in this browser build.');
+  }
+
+  async submitNativeCommandRequest(_: NativeHubCommandRequest): Promise<NativeHubCommandReceipt> {
+    throw new NativeHubCapabilityError('Native operational command submission is unavailable in this browser build.');
+  }
+
+  async subscribe(_: (snapshot: HubSnapshot) => void): Promise<() => void | Promise<void>> {
+    return () => undefined;
+  }
+}
+
+class CapacitorNativeHubBridge implements NativeHubBridge {
+  private readonly plugin: CapacitorLocalHubPlugin;
+
+  constructor(plugin: CapacitorLocalHubPlugin) {
+    this.plugin = plugin;
+  }
+
+  async getSnapshot(): Promise<HubSnapshot> {
+    return this.plugin.getSnapshot();
+  }
+
+  async refresh(): Promise<HubSnapshot> {
+    return this.plugin.refresh ? this.plugin.refresh() : this.plugin.getSnapshot();
+  }
+
+  async discoverDevices(): Promise<DeviceNode[]> {
+    const response = await this.plugin.discoverDevices();
+    return response.devices;
+  }
+
+  async registerDevice(request: DeviceRegistrationRequest): Promise<DeviceNode> {
+    const response = await this.plugin.registerDevice(request);
+    return response.device;
+  }
+
+  async revokeDevice(deviceId: string): Promise<void> {
+    await this.plugin.revokeDevice({ deviceId });
+  }
+
+  async openNativeEnrollment(): Promise<void> {
+    if (!this.plugin.openNativeEnrollment) {
+      throw new NativeHubCapabilityError('This Android build does not include native Cashier Hub enrollment.');
+    }
+    const response = await this.plugin.openNativeEnrollment();
+    if (!response?.opened) throw new NativeHubCapabilityError('The native Cashier Hub enrollment screen could not be opened.');
+  }
+
+  async openNativeStaffSignIn(): Promise<void> {
+    if (!this.plugin.openNativeStaffSignIn) {
+      throw new NativeHubCapabilityError('This Android build does not include native staff sign-in.');
+    }
+    const response = await this.plugin.openNativeStaffSignIn();
+    if (!response?.opened) throw new NativeHubCapabilityError('The native staff sign-in screen could not be opened.');
+  }
+
+  async getNativeOperatorContext(): Promise<NativeHubOperatorContext> {
+    if (!this.plugin.getNativeOperatorContext) {
+      throw new NativeHubCapabilityError('This Android build does not include a native operator context bridge.');
+    }
+    return this.plugin.getNativeOperatorContext();
+  }
+
+  async submitNativeCommandRequest(request: NativeHubCommandRequest): Promise<NativeHubCommandReceipt> {
+    if (!this.plugin.submitNativeCommandRequest) {
+      throw new NativeHubCapabilityError('This Android build does not include native operational command submission.');
+    }
+    return this.plugin.submitNativeCommandRequest(request);
+  }
+
+  async subscribe(listener: (snapshot: HubSnapshot) => void): Promise<() => void | Promise<void>> {
+    if (!this.plugin.addListener) return () => undefined;
+    const handle = await this.plugin.addListener('hubStateChanged', listener);
+    return () => handle.remove();
+  }
+}
+
+/**
+ * Resolves the sole supported local-operation transport. This is intentionally
+ * capability-based: a normal browser build receives an explicit unavailable
+ * result rather than a simulated mesh, certificate authority, or cloud queue.
+ */
+export function resolveNativeHubBridge(): NativeHubBridge {
+  const plugin = getCapacitorPlugin();
+  return plugin ? new CapacitorNativeHubBridge(plugin) : new UnavailableNativeHubBridge();
+}

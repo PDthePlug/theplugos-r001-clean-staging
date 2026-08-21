@@ -9,7 +9,6 @@ describe('MarketingLanding', () => {
       <MarketingLanding
         onSignIn={vi.fn()}
         onCreateBusiness={vi.fn()}
-        onPairDevice={vi.fn()}
       />,
     );
 
@@ -21,22 +20,19 @@ describe('MarketingLanding', () => {
   it('routes each primary action to the existing access flow', () => {
     const onSignIn = vi.fn();
     const onCreateBusiness = vi.fn();
-    const onPairDevice = vi.fn();
 
     render(
       <MarketingLanding
         onSignIn={onSignIn}
         onCreateBusiness={onCreateBusiness}
-        onPairDevice={onPairDevice}
       />,
     );
 
     fireEvent.click(screen.getByRole('button', { name: 'Open ThePlugOS' }));
     fireEvent.click(screen.getByRole('button', { name: /Set up my business/i }));
-    fireEvent.click(screen.getByRole('button', { name: 'Pair an existing device' }));
+    fireEvent.click(screen.getByRole('button', { name: 'Sign in to manage your business' }));
 
-    expect(onSignIn).toHaveBeenCalledOnce();
+    expect(onSignIn).toHaveBeenCalledTimes(2);
     expect(onCreateBusiness).toHaveBeenCalledOnce();
-    expect(onPairDevice).toHaveBeenCalledOnce();
   });
 });

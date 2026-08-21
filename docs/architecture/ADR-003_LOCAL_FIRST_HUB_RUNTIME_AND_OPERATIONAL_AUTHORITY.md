@@ -107,9 +107,11 @@ unavailable, not as a successful simulation.
 
 ## Required command and event boundary
 
-The detailed contract is recorded in
-`LOCAL_FIRST_OPERATIONAL_COMMAND_CONTRACT.md`. No Hub, transport, order, or
-workspace implementation may proceed without complying with that contract.
+The detailed command contract is recorded in
+`LOCAL_FIRST_OPERATIONAL_COMMAND_CONTRACT.md`. Local stock reservation and
+authorization-bundle rebase rules are recorded in
+`LOCAL_FIRST_INVENTORY_AND_RENEWAL_CONTRACT.md`. No Hub, transport, order, or
+workspace implementation may proceed without complying with those contracts.
 
 ## Explicit non-goals
 

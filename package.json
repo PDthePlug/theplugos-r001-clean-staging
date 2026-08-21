@@ -22,7 +22,9 @@
     "test:r001-inspector": "node scripts/test-r001-schema-dump-inspector.mjs",
     "test": "vitest run",
     "test:r002": "node scripts/test-r002-migration.mjs",
-    "test:all": "npm run test:r001-inspector && npm run test:r002 && npm test"
+    "test:hub-protocol": "node --experimental-strip-types scripts/test-hub-crypto-protocol.mjs",
+    "test:r003-local-hub": "node scripts/test-r003-local-hub-contract.mjs",
+    "test:all": "npm run test:r001-inspector && npm run test:r002 && npm run test:hub-protocol && npm run test:r003-local-hub && npm test"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

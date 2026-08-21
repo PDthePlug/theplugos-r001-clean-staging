@@ -6,6 +6,7 @@ import { configService } from '../config';
 import { localHubRuntime } from './local-hub';
 
 export * from './local-hub';
+export * from './native-hub-bridge';
 
 const log = createLogger('KernelRuntime');
 
@@ -32,8 +33,9 @@ export class KernelRuntime {
       const replayOffset = hwm >= 0 ? hwm + 1 : 0;
       await eventEngine.replay(replayOffset);
 
-      // 4. Boot Local Hub Runtime for Distributed Local Operating Environment
-      log.info('Phase 4: Booting Distributed Local Hub Runtime...');
+      // 4. Resolve the native Hub capability. A browser build reports an explicit
+      // unavailable state; it must never emulate a LAN authority or local queue.
+      log.info('Phase 4: Resolving Android-native Local Hub capability...');
       await localHubRuntime.boot();
       
       // 5. Register Health Checks
@@ -50,8 +52,8 @@ export class KernelRuntime {
         const health = localHubRuntime.getNetworkHealth();
         return {
           component: 'LocalHubRuntime',
-          status: health.packetLossRate < 0.5 ? 'HEALTHY' : 'DEGRADED',
-          message: `Local Peers: ${health.localPeerCount}, Transport: ${health.activeTransport}`,
+          status: health.availability === 'READY' ? 'HEALTHY' : health.availability === 'ERROR' ? 'UNHEALTHY' : 'DEGRADED',
+          message: health.message,
           timestamp: new Date().toISOString()
         };
       });
@@ -65,10 +67,10 @@ export class KernelRuntime {
 
   public async shutdown(): Promise<void> {
     log.info('Shutting down Kernel...');
-    // Clean up adapters
+    await localHubRuntime.shutdown();
+    // Adapter shutdown remains the responsibility of the embedding runtime.
     log.info('Kernel shutdown complete.');
   }
 }
 
 export const runtime = new KernelRuntime();
-

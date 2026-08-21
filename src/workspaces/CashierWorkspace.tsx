@@ -155,7 +155,10 @@ export const CashierWorkspace: React.FC<CashierWorkspaceProps> = ({
     const newOrder: OrderRecord = {
       id: orderId,
       businessId: session.businessId,
-      deviceId: localStorage.getItem('plugos_device_id') || `dev-${session.userId}`,
+      // A browser-generated device ID is not operational authority. This
+      // compatibility workspace is gated until a native session bridge supplies
+      // the verified device ID, so never manufacture one from local storage.
+      deviceId: session.deviceId,
       domain: selectedDomain,
       branchId: session.branchId,
       cashierId: session.userId,

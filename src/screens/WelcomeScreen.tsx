@@ -1,9 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { supabase } from '../lib/supabase';
-import { Store, User, Lock, Mail, Building2, Phone, Key, Smartphone, X } from 'lucide-react';
-import { sdk } from '@plugos/sdk';
-import { pairDeviceWithCode, getDeviceBootstrap } from '../lib/security';
-import { getOrCreateDeviceId } from '../lib/deviceIdentity';
+import { Store, Lock, Mail, Building2, X } from 'lucide-react';
 import { MarketingLanding } from './MarketingLanding';
 
 export interface BusinessAuthSession {
@@ -21,7 +18,7 @@ interface WelcomeScreenProps {
 }
 
 export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onLoginSuccess }) => {
-  const [view, setView] = useState<'LOGIN' | 'CREATE' | 'PAIR'>('LOGIN');
+  const [view, setView] = useState<'LOGIN' | 'CREATE'>('LOGIN');
   const [accessOpen, setAccessOpen] = useState(false);
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
@@ -29,20 +26,12 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onLoginSuccess }) 
   // Create Business Fields
   const [businessName, setBusinessName] = useState('');
   const [branchName, setBranchName] = useState('');
-  const [ownerName, setOwnerName] = useState('');
-  const [phone, setPhone] = useState('');
-  const [businessType, setBusinessType] = useState('Takeaway');
   const [confirmPassword, setConfirmPassword] = useState('');
-
-  // Pair Device Fields
-  const [pairingCode, setPairingCode] = useState('');
-  const [deviceNameInput, setDeviceNameInput] = useState('');
-  const [deviceTypeSelect, setDeviceTypeSelect] = useState<'CASHIER' | 'KITCHEN' | 'MANAGER'>('CASHIER');
   
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
 
-  const openAccess = (nextView: 'LOGIN' | 'CREATE' | 'PAIR') => {
+  const openAccess = (nextView: 'LOGIN' | 'CREATE') => {
     setView(nextView);
     setError(null);
     setAccessOpen(true);
@@ -116,6 +105,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onLoginSuccess }) 
       let onboardingStatus = 'NOT_STARTED';
 
       if (memberData && memberData.business_id) {
+        if (memberData.role !== 'OWNER') {
+          throw new Error('This web shell accepts owner accounts only. Staff and manager station access is provided by the enrolled Android Cashier Hub.');
+        }
         bizId = memberData.business_id;
         const bizObj = memberData.businesses as any;
         bizName = bizObj?.name || '';
@@ -186,8 +178,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onLoginSuccess }) 
         branchId: branchData.id,
         branchName: branchData.name,
         ownerId: data.user.id,
-        isOwner: true,
-        deviceId: getOrCreateDeviceId()
+        isOwner: true
       };
 
       console.log('[AUTH_LOGIN] Session restoration complete for owner_id:', data.user.id);
@@ -205,16 +196,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onLoginSuccess }) 
     setLoading(true);
     setError(null);
 
-    const trimmedOwnerName = ownerName.trim();
     const trimmedBizName = businessName.trim();
     const trimmedBranchName = branchName.trim();
     const trimmedEmail = email.trim();
-
-    if (!trimmedOwnerName) {
-      setError('Owner name is required.');
-      setLoading(false);
-      return;
-    }
 
     if (!trimmedEmail) {
       setError('Email address is required.');
@@ -263,6 +247,9 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onLoginSuccess }) 
       if (!data.user) {
         throw new Error('User creation failed: No user returned from authentication server.');
       }
+      if (!data.session) {
+        throw new Error('Confirm your email, then sign in to create the business workspace. No business data was created yet.');
+      }
 
       console.log('[AUTH_SIGNUP] Supabase Auth account created. User ID:', data.user.id);
 
@@ -302,17 +289,10 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onLoginSuccess }) 
         branch_id: createdBranchId,
       });
 
-      // 3. Update onboarding_status = IN_PROGRESS
-      console.log('[ONBOARDING_STATUS] Updating businesses.onboarding_status = IN_PROGRESS for business_id:', createdBusinessId);
-      const { error: updateErr } = await supabase
-        .from('businesses')
-        .update({ onboarding_status: 'IN_PROGRESS' })
-        .eq('id', createdBusinessId);
-
-      if (updateErr) {
-        console.error('[ONBOARDING_STATUS] Failed to update onboarding status in cloud:', updateErr.message);
-        throw new Error('Database error setting initial onboarding status: ' + updateErr.message);
-      }
+      // The R001 initializer intentionally leaves onboarding at NOT_STARTED.
+      // Browser code must not promote a business to IN_PROGRESS/COMPLETED: the
+      // native atomic onboarding command will do that only after staff and Hub
+      // authority exist together.
 
       const bAuth: BusinessAuthSession = {
         businessId: createdBusinessId,
@@ -320,8 +300,7 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onLoginSuccess }) 
         branchId: createdBranchId,
         branchName: trimmedBranchName,
         ownerId: data.user.id,
-        isOwner: true,
-        deviceId: getOrCreateDeviceId()
+        isOwner: true
       };
 
       console.log('[AUTH_SIGNUP] Business creation complete. Launching onboarding wizard.');
@@ -334,89 +313,11 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onLoginSuccess }) 
     }
   };
 
-  const handlePairDevice = async (e: React.FormEvent) => {
-    e.preventDefault();
-    setLoading(true);
-    setError(null);
-    try {
-      if (pairingCode.trim().length !== 6) {
-        throw new Error('Pairing code must be exactly 6 digits.');
-      }
-
-      const currentDeviceId = getOrCreateDeviceId();
-      const deviceName = deviceNameInput.trim() || `${deviceTypeSelect} Terminal`;
-
-      // 1. R002 RPC Enrollment
-      const pairRes = await pairDeviceWithCode(
-        pairingCode.trim(),
-        currentDeviceId,
-        deviceName,
-        deviceTypeSelect
-      );
-
-      if (!pairRes.success || !pairRes.businessId || !pairRes.branchId) {
-        throw new Error(pairRes.error || 'Invalid or expired enrollment code.');
-      }
-
-      // 2. R002 Secure Bootstrap
-      const bootstrap = await getDeviceBootstrap(currentDeviceId);
-
-      if (!bootstrap.success || !bootstrap.business || !bootstrap.branch) {
-        throw new Error(bootstrap.error || 'Failed to retrieve terminal bootstrap configuration.');
-      }
-
-      // 3. Populate local storage cache (credential-free)
-      await sdk.storage.set('businesses', bootstrap.business.id, bootstrap.business);
-      await sdk.storage.set('businesses', 'current', bootstrap.business);
-      if (bootstrap.branch) {
-        await sdk.storage.set('branches', 'directory', [bootstrap.branch]);
-      }
-      if (bootstrap.staff) {
-        await sdk.storage.set('staff', 'directory', bootstrap.staff);
-      }
-      if (bootstrap.products) {
-        await sdk.storage.set('catalog', 'products', bootstrap.products);
-      }
-
-      const enrollmentRecord = {
-        deviceId: currentDeviceId,
-        businessId: pairRes.businessId,
-        businessName: bootstrap.business.name || 'Paired Business',
-        branchId: pairRes.branchId,
-        branchName: bootstrap.branch.name || 'Branch',
-        deviceName,
-        deviceType: deviceTypeSelect,
-        status: 'ACTIVE',
-        enrolledAt: new Date().toISOString()
-      };
-      localStorage.setItem('plugos_enrollment', JSON.stringify(enrollmentRecord));
-
-      const bAuth: BusinessAuthSession = {
-        businessId: pairRes.businessId,
-        businessName: bootstrap.business.name || 'Paired Business',
-        branchId: pairRes.branchId,
-        branchName: bootstrap.branch.name || 'Branch',
-        ownerId: bootstrap.business.owner_id || '',
-        isOwner: false,
-        deviceId: currentDeviceId
-      };
-
-      setPairingCode('');
-
-      onLoginSuccess(bAuth);
-    } catch (err: any) {
-      setError(err.message || 'Failed to pair device.');
-    } finally {
-      setLoading(false);
-    }
-  };
-
   return (
     <>
       <MarketingLanding
         onSignIn={() => openAccess('LOGIN')}
         onCreateBusiness={() => openAccess('CREATE')}
-        onPairDevice={() => openAccess('PAIR')}
       />
 
       {accessOpen && (
@@ -467,15 +368,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onLoginSuccess }) 
               }`}
             >
               Create Business
-            </button>
-            <button
-              type="button"
-              onClick={() => { setView('PAIR'); setError(null); }}
-              className={`flex-1 py-2 rounded-lg text-sm font-bold transition-all ${
-                view === 'PAIR' ? 'bg-amber-500 text-slate-950 shadow-md' : 'text-slate-400 hover:text-white'
-              }`}
-            >
-              Pair Device
             </button>
           </div>
 
@@ -560,53 +452,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onLoginSuccess }) 
                 </div>
               </div>
               <div className="space-y-1.5">
-                <label htmlFor="plug-create-owner" className="text-xs font-bold text-slate-400">Owner Name</label>
-                <div className="relative">
-                  <User className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                  <input
-                    id="plug-create-owner"
-                    type="text"
-                    required
-                    value={ownerName}
-                    onChange={(e) => setOwnerName(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-3 text-white text-sm focus:outline-none focus:border-amber-500"
-                    placeholder="e.g. Nomsa"
-                  />
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <label htmlFor="plug-create-phone" className="text-xs font-bold text-slate-400">Phone Number</label>
-                <div className="relative">
-                  <Phone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                  <input
-                    id="plug-create-phone"
-                    type="tel"
-                    required
-                    value={phone}
-                    onChange={(e) => setPhone(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-3 text-white text-sm focus:outline-none focus:border-amber-500"
-                    placeholder="e.g. 0821234567"
-                  />
-                </div>
-              </div>
-              <div className="space-y-1.5">
-                <label htmlFor="plug-create-type" className="text-xs font-bold text-slate-400">Business Type</label>
-                <div className="relative">
-                  <Store className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                  <select
-                    id="plug-create-type"
-                    value={businessType}
-                    onChange={(e) => setBusinessType(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-3 text-white text-sm focus:outline-none focus:border-amber-500 appearance-none"
-                  >
-                    <option value="Takeaway">Takeaway / Fast Food</option>
-                    <option value="Spaza">Spaza / Grocery Store</option>
-                    <option value="Bakery">Bakery</option>
-                    <option value="Butchery">Butchery</option>
-                  </select>
-                </div>
-              </div>
-              <div className="space-y-1.5">
                 <label htmlFor="plug-create-email" className="text-xs font-bold text-slate-400">Email Address</label>
                 <div className="relative">
                   <Mail className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
@@ -661,66 +506,6 @@ export const WelcomeScreen: React.FC<WelcomeScreenProps> = ({ onLoginSuccess }) 
             </form>
           )}
 
-          {view === 'PAIR' && (
-            <form onSubmit={handlePairDevice} className="space-y-4">
-              <div className="space-y-1.5">
-                <label htmlFor="plug-pair-code" className="text-xs font-bold text-slate-400">6-Digit Pairing Code</label>
-                <div className="relative">
-                  <Key className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                  <input
-                    id="plug-pair-code"
-                    type="text"
-                    required
-                    maxLength={6}
-                    value={pairingCode}
-                    onChange={(e) => setPairingCode(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-3 text-white text-lg tracking-widest font-mono focus:outline-none focus:border-amber-500 text-center"
-                    placeholder="------"
-                  />
-                </div>
-                <p className="text-[10px] text-slate-500 text-center pt-1">
-                  Get this 6-digit code from the Owner Dashboard on an active device.
-                </p>
-              </div>
-
-              <div className="space-y-1.5">
-                <label htmlFor="plug-pair-device-name" className="text-xs font-bold text-slate-400">Device Name</label>
-                <div className="relative">
-                  <Smartphone className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-slate-500" />
-                  <input
-                    id="plug-pair-device-name"
-                    type="text"
-                    value={deviceNameInput}
-                    onChange={(e) => setDeviceNameInput(e.target.value)}
-                    className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-10 pr-4 py-2.5 text-white text-xs focus:outline-none focus:border-amber-500"
-                    placeholder="e.g. Counter Cashier Tablet"
-                  />
-                </div>
-              </div>
-
-              <div className="space-y-1.5">
-                <label htmlFor="plug-pair-device-type" className="text-xs font-bold text-slate-400">Device Type / Role</label>
-                <select
-                  id="plug-pair-device-type"
-                  value={deviceTypeSelect}
-                  onChange={(e) => setDeviceTypeSelect(e.target.value as any)}
-                  className="w-full bg-slate-950 border border-slate-800 rounded-xl px-3 py-2.5 text-white text-xs focus:outline-none focus:border-amber-500"
-                >
-                  <option value="CASHIER">Cashier Terminal POS</option>
-                  <option value="KITCHEN">Kitchen Order Screen (KDS)</option>
-                  <option value="MANAGER">Manager Supervisor Tablet</option>
-                </select>
-              </div>
-
-              <button
-                type="submit"
-                disabled={loading || pairingCode.length < 6}
-                className="w-full bg-amber-500 hover:bg-amber-400 text-slate-950 font-black py-3 rounded-xl transition-all shadow-md mt-2 disabled:opacity-50 cursor-pointer"
-              >
-                {loading ? 'Validating & Pairing...' : 'Pair & Join Business'}
-              </button>
-            </form>
-          )}
         </div>
       </div>
         </div>

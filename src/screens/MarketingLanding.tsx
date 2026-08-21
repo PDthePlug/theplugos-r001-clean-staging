@@ -19,7 +19,6 @@ import {
 interface MarketingLandingProps {
   onSignIn: () => void;
   onCreateBusiness: () => void;
-  onPairDevice: () => void;
 }
 
 const orderFlow = [
@@ -74,8 +73,7 @@ const BrandMark = ({ small = false }: { small?: boolean }) => (
 
 export const MarketingLanding: React.FC<MarketingLandingProps> = ({
   onSignIn,
-  onCreateBusiness,
-  onPairDevice,
+  onCreateBusiness
 }) => {
   return (
     <div className="plug-landing" id="top">
@@ -128,7 +126,7 @@ export const MarketingLanding: React.FC<MarketingLandingProps> = ({
             </div>
           </div>
 
-          <div className="plug-heartbeat-wrap" aria-label="Example live business heartbeat">
+          <div className="plug-heartbeat-wrap" aria-label="Illustrative business heartbeat">
             <div className="plug-orbit plug-orbit-one" aria-hidden="true" />
             <div className="plug-orbit plug-orbit-two" aria-hidden="true" />
 
@@ -138,7 +136,7 @@ export const MarketingLanding: React.FC<MarketingLandingProps> = ({
                   <span className="plug-micro-label">Business heartbeat</span>
                   <h2>Soweto Central</h2>
                 </div>
-                <span className="plug-status-pill"><span /> Live locally</span>
+                <span className="plug-status-pill"><span /> Illustrative preview</span>
               </header>
 
               <div className="plug-metric-row">
@@ -161,8 +159,8 @@ export const MarketingLanding: React.FC<MarketingLandingProps> = ({
 
               <div className="plug-flow-head">
                 <div>
-                  <span className="plug-micro-label">Live order flow</span>
-                  <strong>3 active movements</strong>
+                  <span className="plug-micro-label">Illustrative order flow</span>
+                  <strong>3 example movements</strong>
                 </div>
                 <span className="plug-local-note">Cloud queued: 4</span>
               </div>
@@ -241,8 +239,8 @@ export const MarketingLanding: React.FC<MarketingLandingProps> = ({
 
           <div className="plug-network-card" aria-label="Local network status example">
             <div className="plug-network-head">
-              <span><WifiOff aria-hidden="true" /> Internet unavailable</span>
-              <strong>Local mode active</strong>
+              <span><WifiOff aria-hidden="true" /> Illustrative outage</span>
+              <strong>Example local mode</strong>
             </div>
             <div className="plug-network-line" aria-hidden="true">
               <i /><i /><i /><i />
@@ -284,8 +282,8 @@ export const MarketingLanding: React.FC<MarketingLandingProps> = ({
             <button className="plug-button plug-button-light" type="button" onClick={onCreateBusiness}>
               Set up ThePlugOS <ArrowRight aria-hidden="true" />
             </button>
-            <button className="plug-text-action" type="button" onClick={onPairDevice}>
-              Pair an existing device
+            <button className="plug-text-action" type="button" onClick={onSignIn}>
+              Sign in to manage your business
             </button>
           </div>
         </section>
@@ -302,4 +300,3 @@ export const MarketingLanding: React.FC<MarketingLandingProps> = ({
     </div>
   );
 };
-

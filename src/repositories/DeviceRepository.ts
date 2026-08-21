@@ -1,5 +1,5 @@
 import { sdk } from '@plugos/sdk';
-import { supabase } from '../lib/supabase';
+import type { DeviceNode } from '@plugos/core';
 
 export interface DeviceRecord {
   device_id: string;
@@ -13,117 +13,69 @@ export interface DeviceRecord {
   connectionType?: string;
 }
 
+export class DeviceAuthorityUnavailableError extends Error {
+  constructor(message = 'Device records are owned by the authenticated Android-native Cashier Hub.') {
+    super(message);
+    this.name = 'DeviceAuthorityUnavailableError';
+  }
+}
+
+function mapDevice(node: DeviceNode): DeviceRecord {
+  return {
+    device_id: node.id,
+    business_id: node.businessId || '',
+    branch_id: node.branchId || '',
+    device_name: node.name,
+    device_type: node.role === 'KITCHEN_STAFF' ? 'KITCHEN' : node.role,
+    status: node.status === 'REVOKED' ? 'DISABLED' : 'ACTIVE',
+    last_seen: node.lastHeartbeat || '',
+    certFingerprint: node.certFingerprint,
+    connectionType: node.connectionType
+  };
+}
+
+/**
+ * A read-only view of the device registry reported by the native Hub.
+ * Browser storage, the retired web API, and direct client table writes are
+ * deliberately not device authorities.
+ */
 export class DeviceRepository {
-  private collection = 'devices';
-
-  async save(device: DeviceRecord): Promise<void> {
-    // 1. Save to local sdk storage
-    await sdk.storage.set(this.collection, device.device_id, device);
-    const allDevices = await this.getAll();
-    const idx = allDevices.findIndex(d => d.device_id === device.device_id);
-    if (idx >= 0) {
-      allDevices[idx] = device;
-    } else {
-      allDevices.push(device);
-    }
-    await sdk.storage.set(this.collection, 'all_records', allDevices);
-
-    // 2. Sync to Server API
-    try {
-      await fetch('/api/devices/save', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(device)
-      });
-    } catch (e) {
-      // ignore offline
-    }
-
-    // 3. Sync to Supabase
-    if (supabase) {
-      try {
-        await supabase.from('devices').upsert([device]);
-        await supabase.from('device_records').upsert([device]);
-      } catch (e) {
-        // ignore
-      }
-    }
+  async save(_: DeviceRecord): Promise<void> {
+    throw new DeviceAuthorityUnavailableError();
   }
 
   async getById(deviceId: string): Promise<DeviceRecord | null> {
-    const device = await sdk.storage.get(this.collection, deviceId);
-    if (device) return device;
-    const all = await this.getAll();
-    return all.find(d => d.device_id === deviceId) || null;
+    const device = sdk.hub.getDevices().find((candidate: DeviceNode) => candidate.id === deviceId);
+    return device ? mapDevice(device) : null;
   }
 
   async getForBusiness(businessId: string): Promise<DeviceRecord[]> {
-    // Try Server API
-    try {
-      const res = await fetch(`/api/devices?businessId=${encodeURIComponent(businessId)}`);
-      if (res.ok) {
-        const data = await res.json();
-        if (Array.isArray(data.devices) && data.devices.length > 0) {
-          return data.devices;
-        }
-      }
-    } catch (e) {
-      // ignore
-    }
-
-    // Try Supabase
-    if (supabase) {
-      try {
-        const { data, error } = await supabase
-          .from('devices')
-          .select('*')
-          .eq('business_id', businessId);
-        if (data && !error && data.length > 0) {
-          return data;
-        }
-      } catch (e) {
-        // ignore
-      }
-    }
-
-    const all = await this.getAll();
-    return all.filter(d => d.business_id === businessId);
+    return sdk.hub.getDevices()
+      .filter((device: DeviceNode) => device.businessId === businessId)
+      .map(mapDevice);
   }
 
   async updateStatus(deviceId: string, status: 'ACTIVE' | 'DISABLED'): Promise<void> {
-    const device = await this.getById(deviceId);
-    if (device) {
-      device.status = status;
-      await this.save(device);
+    if (status !== 'DISABLED') {
+      throw new DeviceAuthorityUnavailableError('Reactivation must be performed through a fresh native Hub authorization workflow.');
     }
+    await sdk.hub.revokeDevice(deviceId);
   }
 
-  async updateName(deviceId: string, name: string): Promise<void> {
-    const device = await this.getById(deviceId);
-    if (device) {
-      device.device_name = name;
-      await this.save(device);
-    }
+  async updateName(_: string, __: string): Promise<void> {
+    throw new DeviceAuthorityUnavailableError('Device names are changed through the native Hub registry.');
   }
 
-  async updateLastSeen(deviceId: string): Promise<void> {
-    const device = await this.getById(deviceId);
-    if (device) {
-      device.last_seen = new Date().toISOString();
-      await this.save(device);
-    }
+  async updateLastSeen(_: string): Promise<void> {
+    throw new DeviceAuthorityUnavailableError('Heartbeat state is reported by the native Hub, not written by a browser.');
   }
 
   async remove(deviceId: string): Promise<void> {
-    await sdk.storage.set(this.collection, deviceId, null);
-    const all = await this.getAll();
-    const filtered = all.filter(d => d.device_id !== deviceId);
-    await sdk.storage.set(this.collection, 'all_records', filtered);
+    await sdk.hub.revokeDevice(deviceId);
   }
 
   async getAll(): Promise<DeviceRecord[]> {
-    const records = await sdk.storage.get(this.collection, 'all_records');
-    return Array.isArray(records) ? records : [];
+    return sdk.hub.getDevices().map(mapDevice);
   }
 }
 

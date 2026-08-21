@@ -22,8 +22,8 @@ describe('RoleHeader', () => {
     render(
       <RoleHeader
         session={session}
-        isOnline
-        onToggleOnline={vi.fn()}
+        hubAvailability="READY"
+        cloudStatus="DISCONNECTED"
         outboxCount={4}
         onLockSession={vi.fn()}
         onOpenSyncDiagnostics={vi.fn()}
@@ -33,34 +33,29 @@ describe('RoleHeader', () => {
     expect(screen.getByText('Owner')).toBeDefined();
     expect(screen.getByText('Soweto Central')).toBeDefined();
     expect(screen.getByText('Pride Mokoena')).toBeDefined();
-    expect(screen.getByText('Live + local')).toBeDefined();
-    expect(screen.getByText('4 safely queued')).toBeDefined();
+    expect(screen.getByText('Hub continues locally')).toBeDefined();
+    expect(screen.getByText('4 awaiting acknowledgement')).toBeDefined();
   });
 
-  it('keeps device and session actions behind the system menu', () => {
-    const onToggleOnline = vi.fn();
+  it('keeps session actions behind the system menu and hides unimplemented enrollment', () => {
     const onPair = vi.fn();
     const onLock = vi.fn();
 
     render(
       <RoleHeader
         session={session}
-        isOnline={false}
-        onToggleOnline={onToggleOnline}
+        hubAvailability="READY"
+        cloudStatus="UNKNOWN"
         outboxCount={0}
         onLockSession={onLock}
         onOpenPairingWizard={onPair}
       />,
     );
 
-    fireEvent.click(screen.getByRole('button', { name: 'Reconnect cloud sync' }));
     fireEvent.click(screen.getByRole('button', { name: 'System' }));
-    fireEvent.click(screen.getByRole('button', { name: /Pair a tablet/i }));
+    expect(screen.queryByRole('button', { name: /Pair a tablet/i })).toBeNull();
+    expect(onPair).not.toHaveBeenCalled();
 
-    expect(onToggleOnline).toHaveBeenCalledOnce();
-    expect(onPair).toHaveBeenCalledOnce();
-
-    fireEvent.click(screen.getByRole('button', { name: 'System' }));
     fireEvent.click(screen.getByRole('button', { name: /Lock this station/i }));
     expect(onLock).toHaveBeenCalledOnce();
   });

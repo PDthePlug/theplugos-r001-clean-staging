@@ -1,0 +1,21 @@
+# Native Hub endpoints authenticate with a signed device proof, not a browser
+# Supabase JWT.  JWT verification must therefore be disabled *only* for these
+# three endpoints; each handler performs strict request, proof, scope, and
+# service-RPC validation before it mutates any server fact.
+#
+# This config is staging-only until the R001 clone and R002/R003 rehearsals are
+# accepted. It is not deployment authorization.
+
+[functions.hub-enrollment]
+verify_jwt = false
+
+[functions.hub-staff-session]
+verify_jwt = false
+
+[functions.hub-sync]
+verify_jwt = false
+
+# The owner endpoint validates a normal Supabase user JWT and additionally
+# checks the owner/business/branch relationship through a service-only RPC.
+[functions.hub-owner-enrollment]
+verify_jwt = true

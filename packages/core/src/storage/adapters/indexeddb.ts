@@ -18,9 +18,8 @@ export class IndexedDBStorageAdapter implements IStorageAdapter {
 
   public async init(): Promise<void> {
     if (typeof window === 'undefined' || !window.indexedDB) {
-      log.warn('IndexedDB not supported in current environment. Using memory/localStorage fallback.');
+      log.warn('IndexedDB not supported in current environment. Using non-durable memory only.');
       this.isSupported = false;
-      this.loadFallbackFromLocalStorage();
       return;
     }
 
@@ -46,15 +45,13 @@ export class IndexedDBStorageAdapter implements IStorageAdapter {
         };
 
         request.onerror = (err: Event) => {
-          log.warn('IndexedDB open error, falling back to memory/localStorage', { error: (err.target as any)?.error });
+          log.warn('IndexedDB open error, falling back to non-durable memory', { error: (err.target as any)?.error });
           this.isSupported = false;
-          this.loadFallbackFromLocalStorage();
           resolve();
         };
       } catch (err: any) {
-        log.warn('IndexedDB exception, falling back to memory/localStorage', { error: err.message });
+        log.warn('IndexedDB exception, falling back to non-durable memory', { error: err.message });
         this.isSupported = false;
-        this.loadFallbackFromLocalStorage();
         resolve();
       }
     });
@@ -70,7 +67,6 @@ export class IndexedDBStorageAdapter implements IStorageAdapter {
   public async appendEvent(event: any): Promise<number> {
     if (!this.isSupported || !this.db) {
       this.fallbackEvents.push(event);
-      this.saveFallbackEventsToLocalStorage();
       return this.fallbackEvents.length - 1;
     }
 
@@ -191,7 +187,6 @@ export class IndexedDBStorageAdapter implements IStorageAdapter {
       this.fallbackMemory.set(collection, new Map());
     }
     this.fallbackMemory.get(collection)!.set(key, value);
-    this.saveFallbackKVToLocalStorage();
 
     if (!this.isSupported || !this.db) return;
 
@@ -213,7 +208,6 @@ export class IndexedDBStorageAdapter implements IStorageAdapter {
 
     if (this.fallbackMemory.has(collection)) {
       this.fallbackMemory.get(collection)!.delete(key);
-      this.saveFallbackKVToLocalStorage();
     }
 
     if (!this.isSupported || !this.db) return;
@@ -231,46 +225,4 @@ export class IndexedDBStorageAdapter implements IStorageAdapter {
     });
   }
 
-  private loadFallbackFromLocalStorage() {
-    try {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        const eventsData = localStorage.getItem('plugos_fallback_events');
-        if (eventsData) this.fallbackEvents = JSON.parse(eventsData);
-        const kvData = localStorage.getItem('plugos_fallback_kv');
-        if (kvData) {
-          const parsed = JSON.parse(kvData);
-          Object.keys(parsed).forEach(col => {
-            const map = new Map();
-            Object.keys(parsed[col]).forEach(k => map.set(k, parsed[col][k]));
-            this.fallbackMemory.set(col, map);
-          });
-        }
-      }
-    } catch (e) {
-      log.warn('LocalStorage fallback load failed', e);
-    }
-  }
-
-  private saveFallbackEventsToLocalStorage() {
-    try {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        localStorage.setItem('plugos_fallback_events', JSON.stringify(this.fallbackEvents));
-      }
-    } catch {}
-  }
-
-  private saveFallbackKVToLocalStorage() {
-    try {
-      if (typeof window !== 'undefined' && window.localStorage) {
-        const kvObj: Record<string, Record<string, any>> = {};
-        this.fallbackMemory.forEach((map, col) => {
-          kvObj[col] = {};
-          map.forEach((val, k) => {
-            kvObj[col][k] = val;
-          });
-        });
-        localStorage.setItem('plugos_fallback_kv', JSON.stringify(kvObj));
-      }
-    } catch {}
-  }
 }

@@ -26,27 +26,31 @@ Every command must contain these fields. The Hub derives effective tenancy and
 authority from the verified session rather than trusting repeated payload data.
 
 ```ts
-type OperationalCommand<TPayload> = {
+type OperationalCommand = {
   commandId: string;            // globally unique, stable across retry
   type: string;                 // e.g. order.create
   issuedAt: string;             // ISO-8601 UTC
   deviceId: string;             // verified against signed challenge
   staffSessionId: string;       // verified, expiry-bound, revocable
   sequence: number;             // monotonic per terminal session
-  payload: TPayload;            // domain-specific, schema-validated
+  payloadBase64: string;        // base64url of bounded UTF-8 JSON object
   signature: string;            // device proof of possession
 };
 ```
 
-The command result is one of `committed`, `duplicate`, `rejected`, or
-`unavailable`. A duplicate returns the original receipt; it never repeats its
-business effect.
+The command result is `APPLIED`, `DUPLICATE`, `REJECTED`, or `UNAVAILABLE`.
+`APPLIED` means the local transaction committed; it does not mean cloud delivery
+or external payment capture. A duplicate submitted under matching active
+authority returns the original receipt; it never repeats its business effect. A
+command ID reused with different signed bytes is rejected. The concrete raw-byte
+signature encoding is defined in `NATIVE_HUB_ENROLLMENT_AND_SYNC_PROTOCOL.md`;
+a JSON reserialization is never used as a signature substitute.
 
 ## Atomic local commit
 
 For every accepted command, one SQLite transaction must:
 
-1. record the command receipt or return the existing receipt;
+1. verify device/session proof, record the command receipt or return the matching existing receipt;
 2. validate current branch state and domain invariants;
 3. append immutable event records with globally unique event IDs;
 4. update current-state projections;
@@ -106,7 +110,8 @@ for a client retry.
 
 Before implementation merges, tests must cover:
 
-- repeat of the same command ID returns one receipt and one business effect;
+- repeat of the same signed command returns one receipt and one business effect;
+- reuse of a command ID with different signed bytes is rejected without a business effect;
 - two terminals cannot cross business or branch boundaries;
 - a Cashier cannot invoke Manager/Owner commands;
 - an expired, revoked, or unpaired device is rejected;
