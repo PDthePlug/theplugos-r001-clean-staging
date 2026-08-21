@@ -4,6 +4,8 @@
 - **Release authority:** This document plus the accepted ADRs, ordered
   migrations, and environment-specific evidence records
 - **Last reconciled source:** the R003 native Cashier Hub authority foundation
+  plus source-only R004/R005, native Kitchen workflow, and native station-entry
+  additions
 - **Production mutation authority:** explicitly withheld
 
 ## What is true today
@@ -17,8 +19,16 @@ The first operational slice is an Android-native Cashier Hub foundation. Its
 design is local-first: SQLCipher holds the local ledger, Android Keystore holds
 device keys, a signed authorization bundle establishes one branch authority,
 and cloud receivers replicate durable Hub events. Source-only R004/R005 add
-order-transition authority and a cash-shift/cash-capture path, but no migration
-or Edge receiver is **deployed**.
+order-transition authority and a cash-shift/cash-capture path. The source-only
+native Kitchen workflow can request the already-authorized
+`PLACED -> PREPARING -> READY` transitions through the Hub, but it does not
+demonstrate remote Kitchen, printer, notification, or physical delivery. No
+migration or Edge receiver is **deployed**.
+
+The Android host now has a source-only native station-entry and local
+session-end path that does not borrow an Owner browser session. This does not
+constitute a cloud logout, a hardware acceptance result, or a production
+release claim.
 
 No claim of production readiness, live multi-device operation, payment
 settlement, completed order collection, kitchen delivery, printer delivery, or

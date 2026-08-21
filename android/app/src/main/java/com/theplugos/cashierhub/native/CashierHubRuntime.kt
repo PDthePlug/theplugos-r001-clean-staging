@@ -181,6 +181,17 @@ class CashierHubRuntime(context: Context) {
         return discarded
     }
 
+    /** Ends the local native staff selection without revoking a cloud session
+     * or mutating any operational fact. It remains available when a selector
+     * has expired, so a device can always clear stale local authority. */
+    @Synchronized
+    internal fun endNativeStaffSession(): Boolean {
+        if (closed) throw HubUnavailableException("The Cashier Hub is closed.")
+        val ended = database.endActiveNativeStaffSession()
+        if (ended) notifyObservers()
+        return ended
+    }
+
     /** Called only after the native HTTPS PIN flow has verified and installed
      * a signed bundle containing this exact session. */
     internal fun activateNativeStaffSession(staffSessionId: String) {

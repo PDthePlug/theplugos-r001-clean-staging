@@ -30,10 +30,12 @@
     "test:r003-local-hub": "node scripts/test-r003-local-hub-contract.mjs",
     "test:r004-order-authority": "node scripts/test-r004-order-transition-authority.mjs",
     "test:r005-cash-capture": "node scripts/test-r005-cash-shift-capture-contract.mjs",
+    "test:r006-native-kitchen": "node scripts/test-r006-native-kitchen-workflow-contract.mjs",
+    "test:r007-native-session": "node scripts/test-r007-native-station-entry-contract.mjs",
     "test:browser-authority": "node scripts/test-browser-authority-boundary.mjs",
     "test:android-host": "node scripts/test-android-host-contract.mjs",
     "test:release-truth": "node scripts/test-release-truth.mjs",
-    "test:all": "npm run test:r001-inspector && npm run test:r002 && npm run test:hub-protocol && npm run test:r003-local-hub && npm run test:r004-order-authority && npm run test:r005-cash-capture && npm run test:browser-authority && npm run test:android-host && npm run test:release-truth && npm test"
+    "test:all": "npm run test:r001-inspector && npm run test:r002 && npm run test:hub-protocol && npm run test:r003-local-hub && npm run test:r004-order-authority && npm run test:r005-cash-capture && npm run test:r006-native-kitchen && npm run test:r007-native-session && npm run test:browser-authority && npm run test:android-host && npm run test:release-truth && npm test"
   },
   "dependencies": {
     "@capacitor/android": "8.5.0",

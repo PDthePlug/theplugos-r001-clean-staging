@@ -79,6 +79,12 @@ because R005 implements their routers and atomic contracts. The verifier must
 not list card/QR capture, inventory, shift close, cashup, refund, or device
 commands as permitted until their own handlers exist.
 
+The native Kitchen workspace defined by
+`LOCAL_FIRST_NATIVE_KITCHEN_WORKFLOW_CONTRACT.md` is a bounded rendering and
+request surface for the two Kitchen-owned transitions only. It may show a
+locally committed queue, but it does not prove notification, printer, remote
+device, cloud, or physical-food delivery.
+
 ## Cloud replica rule
 
 R004 adds a security-definer `BEFORE INSERT` trigger on `public.hub_events`.

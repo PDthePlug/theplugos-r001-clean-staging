@@ -367,6 +367,13 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
         session
     }
 
+    /** Ends only the local active-session selector. Durable command intents
+     * and every committed operational fact remain intact for safe recovery or
+     * later reconciliation; this is not a cloud session revocation. */
+    fun endActiveNativeStaffSession(): Boolean = synchronized(monitor) {
+        open().delete("active_native_staff_session", "singleton = 1", null) == 1
+    }
+
     fun activeNativeStaffSession(hubDeviceId: String, now: String): StaffSessionRecord? = synchronized(monitor) {
         HubTime.requireCanonicalUtc(now, "Current Hub time")
         val db = open()
@@ -455,16 +462,32 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
                 }
             }
         }
-        val branchId = db.rawQuery(
-            "SELECT branch_id FROM authorization_bundles WHERE active = 1 LIMIT 1",
+        val activeScope = db.rawQuery(
+            "SELECT business_id, branch_id FROM authorization_bundles WHERE active = 1 LIMIT 1",
             emptyArray()
         ).use { cursor ->
             if (!cursor.moveToFirst()) return@synchronized null
-            cursor.getString(0)
+            Pair(cursor.getString(0), cursor.getString(1))
         }
-        val activeCashShift = readActiveCashShift(db, branchId)
+        val businessId = activeScope.first
+        val branchId = activeScope.second
+        // The operator view is deliberately role-minimized. Kitchen Staff do
+        // not receive catalog pricing, VAT, or cash-custody facts merely
+        // because they share the same Hub process as a Cashier or Manager.
+        val activeCashShift = if (session.role == "CASHIER" || session.role == "MANAGER") {
+            readActiveCashShift(db, branchId)
+        } else {
+            null
+        }
+        val visibleCatalogProducts = if (session.role == "CASHIER") products else emptyList()
+        val visibleVat = if (session.role == "CASHIER") vat else Pair(false, 0.0)
         val pendingCashOrders = if (session.role == "CASHIER") {
-            readPendingCashOrdersForStaff(db, session.staffId)
+            readPendingCashOrdersForStaff(db, session.staffId, businessId, branchId)
+        } else {
+            emptyList()
+        }
+        val pendingKitchenOrders = if (session.role == "KITCHEN_STAFF") {
+            readPendingKitchenOrdersForBranch(db, businessId, branchId)
         } else {
             emptyList()
         }
@@ -472,11 +495,12 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
         NativeOperatorContext(
             staffName = staffName,
             role = session.role,
-            vatEnabled = vat.first,
-            vatRate = vat.second,
-            catalogProducts = products,
+            vatEnabled = visibleVat.first,
+            vatRate = visibleVat.second,
+            catalogProducts = visibleCatalogProducts,
             activeCashShift = activeCashShift,
             pendingCashOrders = pendingCashOrders,
+            pendingKitchenOrders = pendingKitchenOrders,
             recoverableNativeCommands = recoverableNativeCommands
         )
     }
@@ -533,7 +557,12 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
     /** Only the active Cashier's own PENDING cash orders are exposed to the
      * native task UI. The event ledger, not a browser owner identity, binds a
      * projection to its originator. */
-    private fun readPendingCashOrdersForStaff(db: SQLiteDatabase, staffId: String): List<NativePendingCashOrder> =
+    private fun readPendingCashOrdersForStaff(
+        db: SQLiteDatabase,
+        staffId: String,
+        businessId: String,
+        branchId: String
+    ): List<NativePendingCashOrder> =
         db.rawQuery(
             """
             SELECT projection_key, value_json
@@ -546,11 +575,13 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
                     AND e.aggregate_type = 'order'
                     AND e.action = 'ORDER_PLACED'
                     AND e.staff_id = ?
+                    AND e.business_id = ?
+                    AND e.branch_id = ?
               )
             ORDER BY p.updated_at DESC
             LIMIT ?
             """.trimIndent(),
-            arrayOf(staffId, MAX_NATIVE_PENDING_CASH_ORDERS.toString())
+            arrayOf(staffId, businessId, branchId, MAX_NATIVE_PENDING_CASH_ORDERS.toString())
         ).use { cursor ->
             buildList {
                 while (cursor.moveToNext()) {
@@ -570,6 +601,78 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
             }
         }
 
+    /** Kitchen task data is scoped by the immutable local placement event,
+     * rather than trusting a stale projection alone. This keeps retained
+     * projections from a prior branch or bundle out of the active Kitchen
+     * workspace and supports older projections which predate scope fields. */
+    private fun readPendingKitchenOrdersForBranch(
+        db: SQLiteDatabase,
+        businessId: String,
+        branchId: String
+    ): List<NativeKitchenOrder> =
+        db.rawQuery(
+            """
+            SELECT projection_key, value_json
+            FROM projections p
+            WHERE p.projection_name = 'orders'
+              AND EXISTS (
+                  SELECT 1
+                  FROM events e
+                  WHERE e.aggregate_id = p.projection_key
+                    AND e.aggregate_type = 'order'
+                    AND e.action = 'ORDER_PLACED'
+                    AND e.business_id = ?
+                    AND e.branch_id = ?
+              )
+            ORDER BY p.updated_at ASC, p.projection_key ASC
+            LIMIT ?
+            """.trimIndent(),
+            arrayOf(businessId, branchId, MAX_NATIVE_PENDING_KITCHEN_ORDERS.toString())
+        ).use { cursor ->
+            buildList {
+                while (cursor.moveToNext()) {
+                    val orderId = cursor.getString(0).trim()
+                    requireNativeUuid(orderId, "A native Kitchen order projection has an invalid order ID.")
+                    val value = JSONObject(cursor.getString(1))
+                    val payloadOrderId = value.optString("orderId", value.optString("id", "")).trim()
+                    if (payloadOrderId != orderId) {
+                        throw HubCommandRejectedException("A native Kitchen order projection has inconsistent order identifiers.")
+                    }
+                    val status = value.optString("status", "").trim()
+                    if (status !in PENDING_KITCHEN_ORDER_STATUSES) continue
+                    val items = value.optJSONArray("items")
+                        ?: throw HubCommandRejectedException("A native Kitchen order projection has no line items.")
+                    if (items.length() !in 1..MAX_NATIVE_KITCHEN_ORDER_LINES) {
+                        throw HubCommandRejectedException("A native Kitchen order projection has an unsupported line-item count.")
+                    }
+                    val seenProductIds = mutableSetOf<String>()
+                    val lines = buildList {
+                        for (index in 0 until items.length()) {
+                            val item = items.optJSONObject(index)
+                                ?: throw HubCommandRejectedException("A native Kitchen order line is invalid.")
+                            val productId = item.optString("productId", "").trim()
+                            requireNativeUuid(productId, "A native Kitchen order line has an invalid product ID.")
+                            if (!seenProductIds.add(productId)) {
+                                throw HubCommandRejectedException("A native Kitchen order projection has duplicate products.")
+                            }
+                            val name = item.optString("name", "").trim()
+                            if (name.isEmpty() || name.length > MAX_NATIVE_KITCHEN_ITEM_NAME_LENGTH) {
+                                throw HubCommandRejectedException("A native Kitchen order line has an invalid product name.")
+                            }
+                            val quantity = item.optDouble("quantity", Double.NaN)
+                            if (!quantity.isFinite() || quantity <= 0.0 || quantity > MAX_NATIVE_KITCHEN_QUANTITY ||
+                                kotlin.math.abs(quantity - roundKitchenQuantity(quantity)) > KITCHEN_QUANTITY_EPSILON
+                            ) {
+                                throw HubCommandRejectedException("A native Kitchen order line has an invalid quantity.")
+                            }
+                            add(NativeKitchenOrderLine(productId, name, quantity))
+                        }
+                    }
+                    add(NativeKitchenOrder(orderId, status, lines))
+                }
+            }
+        }
+
     /** A missing receipt proves no local command transaction committed: the
      * receipt, events, projections, and outbox are one transaction. Only the
      * currently active native staff session may see the matching non-secret
@@ -582,7 +685,7 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
             LEFT JOIN command_receipts receipt ON receipt.command_id = intent.command_id
             WHERE intent.staff_session_id = ?
               AND receipt.command_id IS NULL
-              AND intent.command_type IN ('shift.open', 'order.create', 'payment.capture')
+              AND intent.command_type IN ('shift.open', 'order.create', 'order.status.transition', 'payment.capture')
             ORDER BY intent.created_at ASC, intent.sequence ASC
             LIMIT ?
             """.trimIndent(),
@@ -1000,6 +1103,27 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
         }
     }
 
+    /** A local order projection is usable only when its immutable placement
+     * event proves it belongs to the active authorization scope. This avoids a
+     * retained prior-branch projection becoming command authority after a Hub
+     * is re-enrolled. */
+    fun orderBelongsToScope(orderId: String, businessId: String, branchId: String): Boolean = synchronized(monitor) {
+        requireNativeUuid(orderId, "Order ID must be a UUID.")
+        open().rawQuery(
+            """
+            SELECT 1
+            FROM events
+            WHERE aggregate_id = ?
+              AND aggregate_type = 'order'
+              AND action = 'ORDER_PLACED'
+              AND business_id = ?
+              AND branch_id = ?
+            LIMIT 1
+            """.trimIndent(),
+            arrayOf(orderId, businessId, branchId)
+        ).use { cursor -> cursor.moveToFirst() }
+    }
+
     fun events(eventIds: List<String>): List<JSONObject> = synchronized(monitor) {
         if (eventIds.isEmpty()) return@synchronized emptyList()
         val placeholders = eventIds.joinToString(",") { "?" }
@@ -1314,7 +1438,17 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
         return amount
     }
 
+    private fun requireNativeUuid(value: String, message: String) {
+        try {
+            UUID.fromString(value)
+        } catch (_: IllegalArgumentException) {
+            throw HubCommandRejectedException(message)
+        }
+    }
+
     private fun roundCashMoney(value: Double): Double = Math.round(value * 100.0) / 100.0
+
+    private fun roundKitchenQuantity(value: Double): Double = Math.round(value * 1_000.0) / 1_000.0
 
     private fun sameReceiptPrincipal(
         receipt: HubReceipt,
@@ -1407,10 +1541,16 @@ class HubDatabase(private val context: Context, private val keys: HubKeyManager)
         const val MAX_CLOUD_BATCH_EVENTS = 100
         const val MAX_SYNC_ERROR_CHARS = 160
         const val MAX_NATIVE_PENDING_CASH_ORDERS = 100
+        const val MAX_NATIVE_PENDING_KITCHEN_ORDERS = 100
+        const val MAX_NATIVE_KITCHEN_ORDER_LINES = 100
+        const val MAX_NATIVE_KITCHEN_ITEM_NAME_LENGTH = 500
+        const val MAX_NATIVE_KITCHEN_QUANTITY = 1_000_000.0
         const val MAX_RECOVERABLE_NATIVE_COMMANDS = 20
         const val MAX_CASH_AMOUNT = 999_999_999.99
         const val MONEY_EPSILON = 0.000_001
+        const val KITCHEN_QUANTITY_EPSILON = 0.000_001
         val PENDING_CASH_ORDER_STATUSES = setOf("PLACED", "PREPARING", "READY")
-        val RECOVERABLE_NATIVE_COMMAND_TYPES = setOf("shift.open", "order.create", "payment.capture")
+        val PENDING_KITCHEN_ORDER_STATUSES = setOf("PLACED", "PREPARING")
+        val RECOVERABLE_NATIVE_COMMAND_TYPES = setOf("shift.open", "order.create", "order.status.transition", "payment.capture")
     }
 }

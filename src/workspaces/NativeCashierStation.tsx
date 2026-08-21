@@ -5,7 +5,7 @@ import type { NativeHubCommandRequest, NativeHubOperatorContext, NetworkHealth }
 
 interface NativeCashierStationProps {
   onExit: () => void;
-  onSignOut: () => void;
+  onEndNativeSession: () => Promise<void>;
 }
 
 type BasketLine = {
@@ -66,7 +66,7 @@ function recoveredPaymentRequests(context: NativeHubOperatorContext): Record<str
  * snapshot and every order moves through the native command request bridge;
  * there is no direct browser Supabase mutation or local-array order authority.
  */
-export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onExit, onSignOut }) => {
+export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onExit, onEndNativeSession }) => {
   const [context, setContext] = useState<NativeHubOperatorContext | null>(null);
   const [health, setHealth] = useState<NetworkHealth | null>(null);
   const [basket, setBasket] = useState<BasketLine[]>([]);
@@ -77,6 +77,7 @@ export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onEx
   const [pendingPaymentRequests, setPendingPaymentRequests] = useState<Record<string, PendingPaymentRequest>>({});
   const [cashTenderedByOrder, setCashTenderedByOrder] = useState<Record<string, string>>({});
   const [capturingOrderId, setCapturingOrderId] = useState<string | null>(null);
+  const [endingNativeSession, setEndingNativeSession] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const refreshNativeState = useCallback(async () => {
@@ -211,6 +212,18 @@ export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onEx
     }
   };
 
+  const endNativeSession = async () => {
+    setEndingNativeSession(true);
+    setMessage(null);
+    try {
+      await onEndNativeSession();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The native staff session could not be ended safely.');
+    } finally {
+      setEndingNativeSession(false);
+    }
+  };
+
   const abandonPendingOrderRequest = async () => {
     if (!pendingRequest) return;
     setSubmitting(true);
@@ -301,6 +314,7 @@ export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onEx
           <h1 className="text-xl font-bold">This active native session does not have a Cashier workspace yet.</h1>
           <p className="text-sm leading-relaxed text-slate-300">{message || 'Sign in as a Cashier on the Android Hub. Kitchen, Manager, Owner, and Administrator operational surfaces remain disabled until their own atomic command contracts are complete.'}</p>
           <button type="button" onClick={onExit} className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-white">Return to native sign-in</button>
+          <button type="button" onClick={() => void endNativeSession()} disabled={endingNativeSession} className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-bold text-slate-100 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">End native staff session</button>
         </section>
       </main>
     );
@@ -406,7 +420,7 @@ export const NativeCashierStation: React.FC<NativeCashierStationProps> = ({ onEx
             <button type="button" disabled={(!basket.length && !pendingRequest) || busy || !activeCashShift} onClick={() => void submitCurrentOrder()} className="mt-5 flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-3 text-sm font-black text-slate-950 hover:bg-emerald-300 disabled:cursor-not-allowed disabled:opacity-50"><ReceiptText className="h-4 w-4" aria-hidden="true" />{submitting ? 'Committing locally…' : pendingRequest ? 'Retry the preserved native request' : 'Commit order locally'}</button>
             {pendingRequest && <button type="button" disabled={busy} onClick={() => void abandonPendingOrderRequest()} className="mt-3 w-full rounded-xl border border-amber-500/30 bg-amber-500/10 px-4 py-2.5 text-xs font-bold text-amber-100 hover:bg-amber-500/20 disabled:opacity-50">Abandon only if native confirms it never committed</button>}
             <button type="button" onClick={() => void refreshNativeState().catch((error) => setMessage(error instanceof Error ? error.message : 'Native state could not be refreshed.'))} className="mt-3 flex w-full items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-950 px-4 py-2.5 text-xs font-bold text-slate-200 hover:bg-slate-800"><RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />Refresh measured Hub state</button>
-            <button type="button" onClick={onSignOut} className="mt-3 flex w-full items-center justify-center gap-2 text-xs font-semibold text-slate-500 hover:text-slate-300"><WifiOff className="h-3.5 w-3.5" aria-hidden="true" />Return to owner browser shell</button>
+            <button type="button" onClick={() => void endNativeSession()} disabled={endingNativeSession || busy} className="mt-3 flex w-full items-center justify-center gap-2 text-xs font-semibold text-slate-500 hover:text-slate-300 disabled:cursor-not-allowed disabled:opacity-50"><WifiOff className="h-3.5 w-3.5" aria-hidden="true" />{endingNativeSession ? 'Ending native staff session…' : 'End native staff session'}</button>
           </aside>
         </div>
       </div>

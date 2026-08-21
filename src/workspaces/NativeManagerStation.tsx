@@ -5,7 +5,7 @@ import type { NativeHubCommandRequest, NativeHubOperatorContext, NetworkHealth }
 
 interface NativeManagerStationProps {
   onExit: () => void;
-  onSignOut: () => void;
+  onEndNativeSession: () => Promise<void>;
 }
 
 type PendingOpenShiftRequest = NativeHubCommandRequest;
@@ -43,13 +43,14 @@ function requestShiftId(request: PendingOpenShiftRequest): string {
 
 /** Native Manager surface for the first cash-custody command. It does not
  * invent shift close, cashup, approval, or variance workflows. */
-export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onExit, onSignOut }) => {
+export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onExit, onEndNativeSession }) => {
   const [context, setContext] = useState<NativeHubOperatorContext | null>(null);
   const [health, setHealth] = useState<NetworkHealth | null>(null);
   const [openingFloat, setOpeningFloat] = useState('0.00');
   const [pendingRequest, setPendingRequest] = useState<PendingOpenShiftRequest | null>(null);
   const [loading, setLoading] = useState(true);
   const [submitting, setSubmitting] = useState(false);
+  const [endingNativeSession, setEndingNativeSession] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
 
   const refreshNativeState = useCallback(async () => {
@@ -135,6 +136,18 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
     }
   };
 
+  const endNativeSession = async () => {
+    setEndingNativeSession(true);
+    setMessage(null);
+    try {
+      await onEndNativeSession();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'The native staff session could not be ended safely.');
+    } finally {
+      setEndingNativeSession(false);
+    }
+  };
+
   const cloudState = health?.cloudStatus || 'UNKNOWN';
   const cloudIcon = cloudState === 'CONNECTED' ? <Cloud className="h-4 w-4" aria-hidden="true" /> : <CloudOff className="h-4 w-4" aria-hidden="true" />;
   const activeShift = context?.activeCashShift || null;
@@ -151,6 +164,7 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
           <h1 className="text-xl font-bold">This active native session does not have a Manager cash-shift workspace.</h1>
           <p className="text-sm leading-relaxed text-slate-300">{message || 'Sign in as a Manager on the Android Hub. Cashier, Kitchen, Owner, and Administrator financial surfaces remain disabled until their own atomic command contracts are complete.'}</p>
           <button type="button" onClick={onExit} className="rounded-xl bg-slate-100 px-4 py-2.5 text-sm font-bold text-slate-950 hover:bg-white">Return to native sign-in</button>
+          <button type="button" onClick={() => void endNativeSession()} disabled={endingNativeSession} className="rounded-xl border border-slate-700 px-4 py-2.5 text-sm font-bold text-slate-100 hover:bg-slate-800 disabled:cursor-not-allowed disabled:opacity-50">End native staff session</button>
         </section>
       </main>
     );
@@ -188,7 +202,7 @@ export const NativeManagerStation: React.FC<NativeManagerStationProps> = ({ onEx
           </section>
         )}
 
-        <div className="flex flex-wrap gap-3"><button type="button" onClick={() => void refreshNativeState().catch((error) => setMessage(error instanceof Error ? error.message : 'Native state could not be refreshed.'))} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-xs font-bold text-slate-200 hover:bg-slate-800"><RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />Refresh measured Hub state</button><button type="button" onClick={onSignOut} className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold text-slate-500 hover:text-slate-300"><WifiOff className="h-3.5 w-3.5" aria-hidden="true" />Return to owner browser shell</button></div>
+        <div className="flex flex-wrap gap-3"><button type="button" onClick={() => void refreshNativeState().catch((error) => setMessage(error instanceof Error ? error.message : 'Native state could not be refreshed.'))} className="inline-flex items-center justify-center gap-2 rounded-xl border border-slate-700 bg-slate-900 px-4 py-2.5 text-xs font-bold text-slate-200 hover:bg-slate-800"><RefreshCw className="h-3.5 w-3.5" aria-hidden="true" />Refresh measured Hub state</button><button type="button" onClick={() => void endNativeSession()} disabled={endingNativeSession || submitting} className="inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-xs font-semibold text-slate-500 hover:text-slate-300 disabled:cursor-not-allowed disabled:opacity-50"><WifiOff className="h-3.5 w-3.5" aria-hidden="true" />{endingNativeSession ? 'Ending native staff session…' : 'End native staff session'}</button></div>
       </div>
     </main>
   );

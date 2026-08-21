@@ -130,6 +130,20 @@ export interface NativeHubPendingCashOrder {
   paymentMethod: 'CASH';
 }
 
+/** Bounded, non-financial local ticket data for an authenticated native
+ * Kitchen session. It is a rendered projection, never command authority. */
+export interface NativeHubKitchenOrderLine {
+  productId: string;
+  name: string;
+  quantity: number;
+}
+
+export interface NativeHubKitchenOrder {
+  id: string;
+  status: 'PLACED' | 'PREPARING';
+  items: NativeHubKitchenOrderLine[];
+}
+
 /** A non-secret native task request which was reserved before signing but has
  * no receipt yet. It may only be retried or explicitly abandoned by the
  * current native staff session. */
@@ -143,6 +157,7 @@ export interface NativeHubOperatorContext {
   catalogProducts: NativeHubCatalogProduct[];
   activeCashShift: NativeHubCashShift | null;
   pendingCashOrders: NativeHubPendingCashOrder[];
+  pendingKitchenOrders: NativeHubKitchenOrder[];
   recoverableNativeCommands: NativeHubRecoverableCommand[];
 }
 
@@ -163,6 +178,7 @@ export interface NativeHubBridge {
   revokeDevice(deviceId: string): Promise<void>;
   openNativeEnrollment(): Promise<void>;
   openNativeStaffSignIn(): Promise<void>;
+  endNativeStaffSession(): Promise<boolean>;
   getNativeOperatorContext(): Promise<NativeHubOperatorContext>;
   submitNativeCommandRequest(request: NativeHubCommandRequest): Promise<NativeHubCommandReceipt>;
   discardNativeCommandRequest(commandId: string): Promise<boolean>;
@@ -201,6 +217,7 @@ interface CapacitorLocalHubPlugin {
   revokeDevice: (request: { deviceId: string }) => Promise<void>;
   openNativeEnrollment?: () => Promise<{ opened: boolean }>;
   openNativeStaffSignIn?: () => Promise<{ opened: boolean }>;
+  endNativeStaffSession?: () => Promise<{ ended: boolean }>;
   getNativeOperatorContext?: () => Promise<NativeHubOperatorContext>;
   submitNativeCommandRequest?: (request: NativeHubCommandRequest) => Promise<NativeHubCommandReceipt>;
   discardNativeCommandRequest?: (request: { commandId: string }) => Promise<{ discarded: boolean }>;
@@ -219,6 +236,12 @@ function getCapacitorPlugin(): CapacitorLocalHubPlugin | null {
   }
 
   return candidate as CapacitorLocalHubPlugin;
+}
+
+/** True only when the installed Capacitor local-Hub capability is present.
+ * This is a host capability check, not a browser-provided authority signal. */
+export function hasNativeHubHost(): boolean {
+  return getCapacitorPlugin() !== null;
 }
 
 class UnavailableNativeHubBridge implements NativeHubBridge {
@@ -256,6 +279,10 @@ class UnavailableNativeHubBridge implements NativeHubBridge {
 
   async openNativeStaffSignIn(): Promise<void> {
     throw new NativeHubCapabilityError('Native staff sign-in is unavailable in this browser build.');
+  }
+
+  async endNativeStaffSession(): Promise<boolean> {
+    throw new NativeHubCapabilityError('Native staff-session end is unavailable in this browser build.');
   }
 
   async getNativeOperatorContext(): Promise<NativeHubOperatorContext> {
@@ -318,6 +345,17 @@ class CapacitorNativeHubBridge implements NativeHubBridge {
     }
     const response = await this.plugin.openNativeStaffSignIn();
     if (!response?.opened) throw new NativeHubCapabilityError('The native staff sign-in screen could not be opened.');
+  }
+
+  async endNativeStaffSession(): Promise<boolean> {
+    if (!this.plugin.endNativeStaffSession) {
+      throw new NativeHubCapabilityError('This Android build does not include native staff-session end.');
+    }
+    const response = await this.plugin.endNativeStaffSession();
+    if (typeof response?.ended !== 'boolean') {
+      throw new NativeHubCapabilityError('The native Hub returned an invalid staff-session end response.');
+    }
+    return response.ended;
   }
 
   async getNativeOperatorContext(): Promise<NativeHubOperatorContext> {

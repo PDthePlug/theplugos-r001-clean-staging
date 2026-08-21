@@ -97,6 +97,20 @@ class ThePlugOSLocalHubPlugin : Plugin() {
         }
     }
 
+    /** Ends the locally selected native staff session. No browser-supplied
+     * staff/session identifier is accepted, and no committed Hub fact is
+     * deleted by this non-operational action. */
+    @PluginMethod
+    fun endNativeStaffSession(call: PluginCall) {
+        try {
+            call.resolve(JSObject().apply {
+                put("ended", runtime().endNativeStaffSession())
+            })
+        } catch (error: IllegalStateException) {
+            call.reject(error.message ?: "The native staff session could not be ended.")
+        }
+    }
+
     /** Opens a native-only pairing-code surface. The browser passes no code,
      * key, certificate, or authority data into this activity. */
     @PluginMethod
@@ -223,6 +237,23 @@ class ThePlugOSLocalHubPlugin : Plugin() {
                     put("status", order.status)
                     put("totalAmount", order.totalAmount)
                     put("paymentMethod", order.paymentMethod)
+                })
+            }
+        })
+        put("pendingKitchenOrders", JSArray().apply {
+            context.pendingKitchenOrders.forEach { order ->
+                put(JSObject().apply {
+                    put("id", order.orderId)
+                    put("status", order.status)
+                    put("items", JSArray().apply {
+                        order.items.forEach { item ->
+                            put(JSObject().apply {
+                                put("productId", item.productId)
+                                put("name", item.name)
+                                put("quantity", item.quantity)
+                            })
+                        }
+                    })
                 })
             }
         })

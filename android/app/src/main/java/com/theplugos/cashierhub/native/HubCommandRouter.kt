@@ -106,6 +106,8 @@ class HubCommandRouter(private val database: HubDatabase) {
         val orderProjection = JSONObject(eventPayload.toString())
             .put("paymentStatus", "PENDING")
             .put("shiftId", activeCashShift.shiftId)
+            .put("businessId", context.businessId)
+            .put("branchId", context.branchId)
 
         return RoutedCommand(
             events = listOf(
@@ -128,6 +130,7 @@ class HubCommandRouter(private val database: HubDatabase) {
         }
         val current = database.projection("orders", orderId)
             ?: throw HubCommandRejectedException("The order does not exist on this Hub.")
+        requireOrderScope(orderId, current, context)
         val currentStatus = current.optString("status", "PLACED")
         val permittedTransitions = mapOf(
             "PLACED" to setOf("PREPARING", "CANCELLED"),
@@ -153,6 +156,8 @@ class HubCommandRouter(private val database: HubDatabase) {
             .put("id", orderId)
             .put("orderId", orderId)
             .put("status", nextStatus)
+            .put("businessId", context.businessId)
+            .put("branchId", context.branchId)
 
         val stockProjections = if (nextStatus == "CANCELLED") restoreStockForCancelledOrder(current) else emptyList()
         return RoutedCommand(
@@ -176,6 +181,7 @@ class HubCommandRouter(private val database: HubDatabase) {
         }
         val order = database.projection("orders", orderId)
             ?: throw HubCommandRejectedException("The order does not exist on this Hub.")
+        requireOrderScope(orderId, order, context)
         val orderStatus = order.optString("status", "").trim()
         val paymentStatus = order.optString("paymentStatus", "PENDING").trim()
         val paymentMethod = order.optString("paymentMethod", order.optString("paymentType", "")).trim()
@@ -231,6 +237,8 @@ class HubCommandRouter(private val database: HubDatabase) {
             .put("paymentId", paymentId)
             .put("cashTendered", cashTendered)
             .put("changeDue", changeDue)
+            .put("businessId", context.businessId)
+            .put("branchId", context.branchId)
         val updatedShift = JSONObject(shiftProjection.toString())
             .put("cashSalesTotal", nextSalesTotal)
             .put("cashTenderedTotal", nextTenderedTotal)
@@ -361,6 +369,22 @@ class HubCommandRouter(private val database: HubDatabase) {
             )
         }
         return ValidatedOrderItems(subtotal, normalizedItems, stockProjections)
+    }
+
+    /** Retained local projections are not tenancy authority. New projections
+     * carry their scope, while older projections are checked against their
+     * immutable `ORDER_PLACED` ledger fact before any transition or capture. */
+    private fun requireOrderScope(orderId: String, order: JSONObject, context: VerifiedCommandContext) {
+        val projectedBusinessId = order.optString("businessId", "").trim()
+        val projectedBranchId = order.optString("branchId", "").trim()
+        if ((projectedBusinessId.isNotEmpty() && projectedBusinessId != context.businessId) ||
+            (projectedBranchId.isNotEmpty() && projectedBranchId != context.branchId)
+        ) {
+            throw HubCommandRejectedException("The local order projection is outside this Hub authorization scope.")
+        }
+        if (!database.orderBelongsToScope(orderId, context.businessId, context.branchId)) {
+            throw HubCommandRejectedException("The local order has no immutable placement event in this Hub authorization scope.")
+        }
     }
 
     private fun restoreStockForCancelledOrder(current: JSONObject): List<ProjectionWrite> {

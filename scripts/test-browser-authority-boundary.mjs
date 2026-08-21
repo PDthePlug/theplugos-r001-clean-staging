@@ -22,6 +22,8 @@ const activeEntryModules = [
   'src/components/NativeHubEnrollmentControl.tsx',
   'src/components/RoleLoginModal.tsx',
   'src/workspaces/NativeCashierStation.tsx',
+  'src/workspaces/NativeKitchenStation.tsx',
+  'src/workspaces/NativeManagerStation.tsx',
 ];
 
 const activeSources = await Promise.all(activeEntryModules.map(async (path) => [path, await readFile(resolve(root, path), 'utf8')]));

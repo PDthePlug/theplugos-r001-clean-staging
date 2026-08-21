@@ -194,6 +194,7 @@ data class NativeOperatorContext(
     val catalogProducts: List<NativeCatalogProduct>,
     val activeCashShift: NativeCashShift?,
     val pendingCashOrders: List<NativePendingCashOrder>,
+    val pendingKitchenOrders: List<NativeKitchenOrder>,
     val recoverableNativeCommands: List<NativeRecoverableCommand>
 )
 
@@ -226,6 +227,21 @@ data class NativePendingCashOrder(
     val status: String,
     val totalAmount: Double,
     val paymentMethod: String
+)
+
+/** A Kitchen session sees only locally committed, branch-scoped preparation
+ * facts. Payment, customer, cashier, staff-session, and device data are not
+ * part of this task projection. */
+data class NativeKitchenOrder(
+    val orderId: String,
+    val status: String,
+    val items: List<NativeKitchenOrderLine>
+)
+
+data class NativeKitchenOrderLine(
+    val productId: String,
+    val name: String,
+    val quantity: Double
 )
 
 /** A non-secret task request reserved by the Hub before signing, with no

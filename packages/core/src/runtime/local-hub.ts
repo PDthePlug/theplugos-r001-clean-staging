@@ -27,7 +27,7 @@ export type {
   NetworkHealth,
   SecondaryTransportMetric
 } from './native-hub-bridge';
-export { NativeHubCapabilityError } from './native-hub-bridge';
+export { NativeHubCapabilityError, hasNativeHubHost } from './native-hub-bridge';
 
 const log = createLogger('LocalHubRuntime');
 
@@ -109,6 +109,12 @@ export class LocalHubRuntime {
 
   public async openNativeStaffSignIn(): Promise<void> {
     await this.bridge.openNativeStaffSignIn();
+  }
+
+  public async endNativeStaffSession(): Promise<boolean> {
+    const ended = await this.bridge.endNativeStaffSession();
+    await this.refresh();
+    return ended;
   }
 
   public async getNativeOperatorContext(): Promise<NativeHubOperatorContext> {

@@ -1,5 +1,5 @@
 import React, { lazy, Suspense, useCallback, useEffect, useState } from 'react';
-import { localHubRuntime } from '@plugos/core';
+import { hasNativeHubHost, localHubRuntime } from '@plugos/core';
 import type { NativeHubOperatorContext, NetworkHealth } from '@plugos/core';
 import type { Branch, StaffMember } from './types';
 import { WelcomeScreen, type BusinessAuthSession, type OwnerAccessIdentity } from './screens/WelcomeScreen';
@@ -17,6 +17,9 @@ const NativeCashierStation = lazy(() =>
 );
 const NativeManagerStation = lazy(() =>
   import('./workspaces/NativeManagerStation').then((module) => ({ default: module.NativeManagerStation }))
+);
+const NativeKitchenStation = lazy(() =>
+  import('./workspaces/NativeKitchenStation').then((module) => ({ default: module.NativeKitchenStation }))
 );
 
 const OperatingSurfaceLoading = () => (
@@ -87,6 +90,66 @@ interface OwnerContext {
   staff: StaffMember[];
 }
 
+/** Routes a role only after the Android Hub returns a verified native
+ * operator context. This shell is intentionally reusable without Owner cloud
+ * authentication for the installed Capacitor host. */
+function NativeStationAccess({
+  staffList = [],
+  branches = [],
+  businessId,
+  branchId,
+  onBrowserSignOut,
+}: {
+  staffList?: StaffMember[];
+  branches?: Branch[];
+  businessId?: string;
+  branchId?: string;
+  onBrowserSignOut?: () => void;
+}) {
+  const [showNativeStation, setShowNativeStation] = useState(false);
+  const [nativeStationRole, setNativeStationRole] = useState<NativeHubOperatorContext['role'] | null>(null);
+
+  const exitNativeStation = useCallback(() => {
+    setShowNativeStation(false);
+    setNativeStationRole(null);
+  }, []);
+
+  const endNativeStaffSession = useCallback(async () => {
+    await localHubRuntime.endNativeStaffSession();
+    exitNativeStation();
+  }, [exitNativeStation]);
+
+  if (showNativeStation) {
+    return (
+      <Suspense fallback={<OperatingSurfaceLoading />}>
+        {nativeStationRole === 'MANAGER' ? (
+          <NativeManagerStation onExit={exitNativeStation} onEndNativeSession={endNativeStaffSession} />
+        ) : nativeStationRole === 'KITCHEN_STAFF' ? (
+          <NativeKitchenStation onExit={exitNativeStation} onEndNativeSession={endNativeStaffSession} />
+        ) : (
+          <NativeCashierStation onExit={exitNativeStation} onEndNativeSession={endNativeStaffSession} />
+        )}
+      </Suspense>
+    );
+  }
+
+  return (
+    <Suspense fallback={<OperatingSurfaceLoading />}>
+      <RoleLoginModal
+        staffList={staffList}
+        branches={branches}
+        businessId={businessId}
+        branchId={branchId}
+        onOpenNativeStation={(role) => {
+          setNativeStationRole(role);
+          setShowNativeStation(true);
+        }}
+        onSignOut={onBrowserSignOut}
+      />
+    </Suspense>
+  );
+}
+
 /**
  * The web entry point is intentionally an owner-only, read-only cloud shell.
  * It does not mount the legacy operational workspaces, restore browser-held
@@ -101,9 +164,6 @@ function MainOSApp() {
   const [ownerSelectionOwnerId, setOwnerSelectionOwnerId] = useState<string | null>(null);
   const [unboundOwnerId, setUnboundOwnerId] = useState<string | null>(null);
   const [showSetupWizard, setShowSetupWizard] = useState(false);
-  const [showNativeCashierStation, setShowNativeCashierStation] = useState(false);
-  const [nativeStationRole, setNativeStationRole] = useState<NativeHubOperatorContext['role'] | null>(null);
-  const [, setHubHealth] = useState<NetworkHealth | null>(null);
   const [ownerAccessError, setOwnerAccessError] = useState<string | null>(null);
   const [recoveryMode, setRecoveryMode] = useState(() => {
     if (typeof window === 'undefined') return false;
@@ -118,8 +178,6 @@ function MainOSApp() {
     setOwnerSelectionOwnerId(null);
     setUnboundOwnerId(null);
     setShowSetupWizard(false);
-    setShowNativeCashierStation(false);
-    setNativeStationRole(null);
     setOwnerAccessError(null);
   }, []);
 
@@ -254,8 +312,6 @@ function MainOSApp() {
       setBranches([]);
       setStaffList([]);
       setShowSetupWizard(false);
-      setShowNativeCashierStation(false);
-      setNativeStationRole(null);
       setOwnerSelectionOwnerId(null);
       setUnboundOwnerId(null);
 
@@ -296,35 +352,6 @@ function MainOSApp() {
     }
     setRecoveryMode(false);
   }, [signOut]);
-
-  useEffect(() => {
-    let mounted = true;
-    let unsubscribeHub: (() => void) | undefined;
-
-    const boot = async () => {
-      try {
-        // The browser shell must not boot the retired browser event, sync, or
-        // certificate kernels. Its only operational capability is a measured
-        // view of the native Hub bridge.
-        await localHubRuntime.boot();
-        if (!mounted) return;
-        setHubHealth(localHubRuntime.getNetworkHealth());
-        unsubscribeHub = localHubRuntime.subscribe((snapshot: { networkHealth: NetworkHealth }) => {
-          if (mounted) setHubHealth(snapshot.networkHealth);
-        });
-      } catch (error) {
-        // A browser native-bridge failure is an unavailable station, not a
-        // reason to fall back to the retired operational browser paths.
-        console.warn('[NATIVE_HUB_BOOT] Native Hub status is unavailable:', error);
-      }
-    };
-
-    void boot();
-    return () => {
-      mounted = false;
-      unsubscribeHub?.();
-    };
-  }, []);
 
   useEffect(() => {
     let disposed = false;
@@ -394,41 +421,44 @@ function MainOSApp() {
     );
   }
 
-  if (showNativeCashierStation) {
-    return (
-      <Suspense fallback={<OperatingSurfaceLoading />}>
-        {nativeStationRole === 'MANAGER' ? (
-          <NativeManagerStation
-            onExit={() => { setShowNativeCashierStation(false); setNativeStationRole(null); }}
-            onSignOut={() => void signOut()}
-          />
-        ) : (
-          <NativeCashierStation
-            onExit={() => { setShowNativeCashierStation(false); setNativeStationRole(null); }}
-            onSignOut={() => void signOut()}
-          />
-        )}
-      </Suspense>
-    );
-  }
-
   return (
-    <Suspense fallback={<OperatingSurfaceLoading />}>
-      <RoleLoginModal
-        staffList={staffList}
-        branches={branches}
-        businessId={businessAuth.businessId}
-        branchId={businessAuth.branchId}
-        onOpenNativeStation={(role) => {
-          setNativeStationRole(role);
-          setShowNativeCashierStation(true);
-        }}
-        onSignOut={() => void signOut()}
-      />
-    </Suspense>
+    <NativeStationAccess
+      staffList={staffList}
+      branches={branches}
+      businessId={businessAuth.businessId}
+      branchId={businessAuth.branchId}
+      onBrowserSignOut={() => void signOut()}
+    />
   );
 }
 
 export default function App() {
-  return <MainOSApp />;
+  const [, setHubHealth] = useState<NetworkHealth | null>(null);
+
+  useEffect(() => {
+    let mounted = true;
+    let unsubscribeHub: (() => void) | undefined;
+    void (async () => {
+      try {
+        // Both the owner-only browser shell and the direct Android-native
+        // station entry use this measured capability bridge. Neither may fall
+        // back to a browser event, sync, or certificate kernel.
+        await localHubRuntime.boot();
+        if (!mounted) return;
+        setHubHealth(localHubRuntime.getNetworkHealth());
+        unsubscribeHub = localHubRuntime.subscribe((snapshot: { networkHealth: NetworkHealth }) => {
+          if (mounted) setHubHealth(snapshot.networkHealth);
+        });
+      } catch (error) {
+        console.warn('[NATIVE_HUB_BOOT] Native Hub status is unavailable:', error);
+      }
+    })();
+    return () => {
+      mounted = false;
+      unsubscribeHub?.();
+      void localHubRuntime.shutdown();
+    };
+  }, []);
+
+  return hasNativeHubHost() ? <NativeStationAccess /> : <MainOSApp />;
 }

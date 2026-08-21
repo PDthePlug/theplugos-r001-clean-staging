@@ -49,6 +49,12 @@ used as a session selector, a bundle, a signature, or any credential material.
 The UI treats catalog totals as a preview; the native router recalculates price
 and tax from its SQLCipher signed snapshot before it commits an order.
 
+The Android host can end its local active-staff selector through the no-argument
+native `endNativeStaffSession()` capability. It is not a browser logout or a
+cloud revocation, and it cannot select or erase another staff session. The
+full entry and session-end boundary is defined in
+`NATIVE_STATION_ENTRY_AND_SESSION_END_CONTRACT.md`.
+
 ## Native authority flow
 
 1. The native-only staff sign-in activity verifies a fresh PIN online and
@@ -80,6 +86,11 @@ The latter is not a browser delete: the native Hub confirms the active session
 owns the intent and that no receipt exists before it removes only that
 reservation. It cannot delete a committed event, projection, audit fact, or
 cloud-outbox item.
+
+`order.status.transition` uses this same recovery rule for the native Kitchen
+workflow. The Kitchen surface may retry only the original `orderId` and target
+status, and it must block a replacement transition request for that order until
+native code returns a receipt or confirms abandonment.
 
 ## Bundle and restart rules
 
