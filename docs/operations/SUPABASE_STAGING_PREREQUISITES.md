@@ -16,9 +16,12 @@ clone operation is database-only, so the dashboard configuration listed below
 must still be recreated and verified.
 
 If Restore to a New Project is unavailable, create a new isolated Supabase
-project and restore a verified, sanitized R001 backup using Supabase's supported
-backup/restore process. A normal `supabase db dump` omits managed schemas such
-as Auth and Storage, so it is not by itself an equivalent R001 clone.
+project and restore a verified R001 logical backup using Supabase's supported
+backup/restore process. The schema dump omits managed schemas such as Auth and
+Storage while the data dump can include their table rows; neither operation
+copies all managed configuration or Storage object bytes. Follow
+`docs/operations/R001_FREE_PLAN_STAGING_CLONE_RUNBOOK.md` for the exact
+Free-plan procedure and equivalence gate.
 
 Do not use a data-less preview branch as proof of production-equivalent R001
 behavior.
